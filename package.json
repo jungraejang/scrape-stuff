@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
+    "dev": "node --use-system-ca ./node_modules/next/dist/bin/next dev",
+    "build": "node --use-system-ca ./node_modules/next/dist/bin/next build",
+    "start": "node --use-system-ca ./node_modules/next/dist/bin/next start",
     "lint": "eslint",
     "prune": "node --use-system-ca --import tsx scripts/prune-stale.ts",
     "scrape:all": "node --use-system-ca --import tsx scripts/run-all.ts",
@@ -14,6 +14,7 @@
     "scrape:streeteasy": "node --use-system-ca --import tsx scripts/scrape-streeteasy.ts",
     "scrape:craigslist": "node --use-system-ca --import tsx scripts/scrape-craigslist.ts",
     "scrape:facebook": "node --use-system-ca --import tsx scripts/scrape-facebook.ts",
+    "scrape:reddit": "node --use-system-ca --import tsx scripts/scrape-reddit.ts",
     "fb:login": "node --use-system-ca --import tsx scripts/fb-login.ts"
   },
   "dependencies": {

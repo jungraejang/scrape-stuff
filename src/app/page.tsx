@@ -6,6 +6,41 @@ import ListingsGrid from "@/components/ListingsGrid";
 // revalidate endpoint. Fresh scrapes invalidate the "listings" tag on demand.
 export const revalidate = 3600;
 
+const BATCH = 1000;
+const FETCH_RETRIES = 3;
+
+function isTransientFetchError(message: string): boolean {
+  return /fetch failed|ECONNRESET|ETIMEDOUT|ENOTFOUND|socket hang up/i.test(message);
+}
+
+async function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Retries Supabase reads when the network blips during cache revalidation. */
+async function fetchListingsBatch(from: number): Promise<Listing[]> {
+  const supabase = getSupabaseClient();
+  if (!supabase) throw new Error("NOT_CONFIGURED");
+
+  for (let attempt = 0; attempt < FETCH_RETRIES; attempt++) {
+    const { data, error } = await supabase
+      .from("listings")
+      .select("*")
+      .order("write_dt", { ascending: false, nullsFirst: false })
+      .order("ext_id", { ascending: true })
+      .range(from, from + BATCH - 1);
+
+    if (!error) return (data ?? []) as Listing[];
+
+    const message = error.message ?? String(error);
+    if (!isTransientFetchError(message) || attempt === FETCH_RETRIES - 1) {
+      throw new Error(message);
+    }
+    await sleep(1000 * (attempt + 1));
+  }
+  return [];
+}
+
 /**
  * Fetches every listing, cached under the "listings" tag. Scrapers invalidate
  * this tag via /api/revalidate so the site refreshes right after a run.
@@ -14,25 +49,11 @@ export const revalidate = 3600;
  */
 const getCachedListings = unstable_cache(
   async (): Promise<Listing[]> => {
-    const supabase = getSupabaseClient();
-    if (!supabase) throw new Error("NOT_CONFIGURED");
-
-    // Supabase caps every query at 1000 rows, so fetch in batches until a
-    // batch comes back short.
-    const BATCH = 1000;
     const listings: Listing[] = [];
     for (let from = 0; ; from += BATCH) {
-      const { data, error } = await supabase
-        .from("listings")
-        .select("*")
-        .order("write_dt", { ascending: false, nullsFirst: false })
-        .order("ext_id", { ascending: true })
-        .range(from, from + BATCH - 1);
-
-      if (error) throw new Error(error.message);
-
-      listings.push(...((data ?? []) as Listing[]));
-      if (!data || data.length < BATCH) break;
+      const batch = await fetchListingsBatch(from);
+      listings.push(...batch);
+      if (batch.length < BATCH) break;
     }
     return listings;
   },

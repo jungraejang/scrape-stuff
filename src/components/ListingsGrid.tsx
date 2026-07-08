@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { LayoutGrid, List, Scroll } from "lucide-react";
 import type { Listing } from "@/lib/supabase";
@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { Switch } from "@/components/ui/switch";
+import { Slider } from "@/components/ui/slider";
 import {
   Select,
   SelectContent,
@@ -83,11 +83,37 @@ const SOURCE_BRAND: Record<
       "border-[#1877F2] bg-[#1877F2] text-white hover:bg-[#1877F2]/90 dark:border-[#1877F2] dark:bg-[#1877F2]",
     badge: "border-transparent bg-[#1877F2] text-white",
   },
+  reddit: {
+    label: "Reddit",
+    chip: "border-[#FF4500]/45 text-[#FF4500] hover:bg-[#FF4500]/10 dark:border-[#FF4500]/55 dark:text-[#FF7A50]",
+    chipActive:
+      "border-[#FF4500] bg-[#FF4500] text-white hover:bg-[#FF4500]/90 dark:border-[#FF4500] dark:bg-[#FF4500]",
+    badge: "border-transparent bg-[#FF4500] text-white",
+  },
 };
 
 const SOURCE_KEYS = Object.keys(SOURCE_BRAND) as Listing["source"][];
 
-const PRICE_CAP = 2000;
+const BOROUGH_KEYS = [
+  "manhattan",
+  "brooklyn",
+  "queens",
+  "bronx",
+  "staten island",
+] as const;
+
+const BOROUGH_LABELS: Record<(typeof BOROUGH_KEYS)[number], string> = {
+  manhattan: "Manhattan",
+  brooklyn: "Brooklyn",
+  queens: "Queens",
+  bronx: "Bronx",
+  "staten island": "Staten Island",
+};
+
+const PRICE_SLIDER_MIN = 0;
+const PRICE_SLIDER_MAX = 3000;
+const PRICE_SLIDER_STEP = 50;
+const DEFAULT_PRICE_RANGE: [number, number] = [0, 2000];
 const PAGE_SIZE_OPTIONS = [8, 24, 60, 100] as const;
 const DISPLAY_COUNT_LABELS: Record<string, string> = {
   "8": "8",
@@ -96,28 +122,171 @@ const DISPLAY_COUNT_LABELS: Record<string, string> = {
   "100": "100",
 };
 
-export default function ListingsGrid({ listings }: { listings: Listing[] }) {
-  const [source, setSource] = useState<string>("all");
-  const [category, setCategory] = useState<string>("all");
-  const [sort, setSort] = useState<SortKey>("newest");
-  const [capPrice, setCapPrice] = useState(true);
-  const [view, setView] = useState<ViewMode>("cards");
-  const [pageSize, setPageSize] = useState<number>(24);
-  const [page, setPage] = useState(1);
+const FILTER_STORAGE_KEY = "listings-filters";
 
-  // Listings without a price are kept; they can't be proven to be above the cap.
-  const byPrice = useMemo(
-    () =>
-      capPrice
-        ? listings.filter((l) => l.price == null || l.price <= PRICE_CAP)
-        : listings,
-    [listings, capPrice],
+type SavedFilters = {
+  source: string;
+  borough: string;
+  category: string;
+  sort: SortKey;
+  priceRange: [number, number];
+  view: ViewMode;
+  pageSize: number;
+};
+
+const DEFAULT_FILTERS: SavedFilters = {
+  source: "all",
+  borough: "all",
+  category: "all",
+  sort: "newest",
+  priceRange: DEFAULT_PRICE_RANGE,
+  view: "cards",
+  pageSize: 24,
+};
+
+function clampPrice(n: number): number {
+  return Math.min(
+    PRICE_SLIDER_MAX,
+    Math.max(PRICE_SLIDER_MIN, Math.round(n / PRICE_SLIDER_STEP) * PRICE_SLIDER_STEP),
   );
+}
+
+function normalizePriceRange(raw: unknown): [number, number] {
+  if (Array.isArray(raw) && raw.length === 2) {
+    const lo = clampPrice(Number(raw[0]));
+    const hi = clampPrice(Number(raw[1]));
+    if (Number.isFinite(lo) && Number.isFinite(hi)) {
+      return lo <= hi ? [lo, hi] : [hi, lo];
+    }
+  }
+  return DEFAULT_PRICE_RANGE;
+}
+
+function readPriceRange(parsed: Partial<SavedFilters> & { capPrice?: boolean }): [number, number] {
+  if (parsed.priceRange) return normalizePriceRange(parsed.priceRange);
+  // Migrate saved settings from the old Under $2,000 toggle.
+  if (typeof parsed.capPrice === "boolean") {
+    return parsed.capPrice ? DEFAULT_PRICE_RANGE : [PRICE_SLIDER_MIN, PRICE_SLIDER_MAX];
+  }
+  return DEFAULT_PRICE_RANGE;
+}
+
+function readSavedFilters(): SavedFilters {
+  if (typeof window === "undefined") return DEFAULT_FILTERS;
+  try {
+    const raw = localStorage.getItem(FILTER_STORAGE_KEY);
+    if (!raw) return DEFAULT_FILTERS;
+    const parsed = JSON.parse(raw) as Partial<SavedFilters>;
+    return {
+      source:
+        typeof parsed.source === "string" ? parsed.source : DEFAULT_FILTERS.source,
+      borough:
+        typeof parsed.borough === "string" &&
+        (parsed.borough === "all" ||
+          BOROUGH_KEYS.includes(parsed.borough as (typeof BOROUGH_KEYS)[number]))
+          ? parsed.borough
+          : DEFAULT_FILTERS.borough,
+      category:
+        typeof parsed.category === "string"
+          ? parsed.category
+          : DEFAULT_FILTERS.category,
+      sort:
+        parsed.sort === "newest" ||
+        parsed.sort === "price_asc" ||
+        parsed.sort === "price_desc"
+          ? parsed.sort
+          : DEFAULT_FILTERS.sort,
+      priceRange: readPriceRange(parsed),
+      view: parsed.view === "list" ? "list" : "cards",
+      pageSize: PAGE_SIZE_OPTIONS.includes(
+        parsed.pageSize as (typeof PAGE_SIZE_OPTIONS)[number],
+      )
+        ? (parsed.pageSize as number)
+        : DEFAULT_FILTERS.pageSize,
+    };
+  } catch {
+    return DEFAULT_FILTERS;
+  }
+}
+
+export default function ListingsGrid({ listings }: { listings: Listing[] }) {
+  const [filters, setFilters] = useState<SavedFilters>(DEFAULT_FILTERS);
+  const [page, setPage] = useState(1);
+  const filtersHydrated = useRef(false);
+
+  useEffect(() => {
+    // Hydrate filter UI from localStorage after mount (avoids SSR mismatch).
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- client-only hydration from localStorage
+    setFilters(readSavedFilters());
+    filtersHydrated.current = true;
+  }, []);
+
+  const { source, borough, category, sort, priceRange, view, pageSize } = filters;
+  const setSource = (value: string) => {
+    setFilters((f) => ({ ...f, source: value, category: "all" }));
+    setPage(1);
+  };
+  const setBorough = (value: string) => {
+    setFilters((f) => ({ ...f, borough: value }));
+    setPage(1);
+  };
+  const setCategory = (value: string) => {
+    setFilters((f) => ({ ...f, category: value }));
+    setPage(1);
+  };
+  const setSort = (value: SortKey) => {
+    setFilters((f) => ({ ...f, sort: value }));
+    setPage(1);
+  };
+  const setPriceRange = (value: number | readonly number[]) => {
+    if (typeof value === "number") return;
+    const range = normalizePriceRange([...value]);
+    setFilters((f) => ({ ...f, priceRange: range }));
+    setPage(1);
+  };
+  const setView = (value: ViewMode) => {
+    setFilters((f) => ({ ...f, view: value }));
+  };
+  const setPageSize = (value: number) => {
+    setFilters((f) => ({ ...f, pageSize: value }));
+    setPage(1);
+  };
+
+  // Listings without a price are kept; they can't be proven to be out of range.
+  const byPrice = useMemo(() => {
+    const [min, max] = priceRange;
+    const isFullRange = min <= PRICE_SLIDER_MIN && max >= PRICE_SLIDER_MAX;
+    if (isFullRange) return listings;
+    return listings.filter(
+      (l) => l.price == null || (l.price >= min && l.price <= max),
+    );
+  }, [listings, priceRange]);
+
+  const boroughs = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const l of byPrice) {
+      if (!l.borough) continue;
+      counts.set(l.borough, (counts.get(l.borough) ?? 0) + 1);
+    }
+    return BOROUGH_KEYS.map((key) => [key, counts.get(key) ?? 0] as const).filter(
+      ([, count]) => count > 0,
+    );
+  }, [byPrice]);
+
+  const activeBorough =
+    borough === "all" || boroughs.some(([key]) => key === borough)
+      ? borough
+      : "all";
+
+  const byBorough = useMemo(() => {
+    if (activeBorough === "all") return byPrice;
+    return byPrice.filter((l) => l.borough === activeBorough);
+  }, [byPrice, activeBorough]);
 
   const bySource = useMemo(
     () =>
-      source === "all" ? byPrice : byPrice.filter((l) => l.source === source),
-    [byPrice, source],
+      source === "all" ? byBorough : byBorough.filter((l) => l.source === source),
+    [byBorough, source],
   );
 
   const categories = useMemo(() => {
@@ -129,10 +298,27 @@ export default function ListingsGrid({ listings }: { listings: Listing[] }) {
     return [...names.entries()].sort((a, b) => b[1] - a[1]);
   }, [bySource]);
 
+  const activeCategory =
+    category === "all" || categories.some(([name]) => name === category)
+      ? category
+      : "all";
+
+  useEffect(() => {
+    if (!filtersHydrated.current) return;
+    localStorage.setItem(
+      FILTER_STORAGE_KEY,
+      JSON.stringify({
+        ...filters,
+        borough: activeBorough,
+        category: activeCategory,
+      }),
+    );
+  }, [filters, activeBorough, activeCategory]);
+
   const visible = useMemo(() => {
     let result = bySource;
-    if (category !== "all") {
-      result = result.filter((l) => (l.category ?? "Other") === category);
+    if (activeCategory !== "all") {
+      result = result.filter((l) => (l.category ?? "Other") === activeCategory);
     }
     return [...result].sort((a, b) => {
       if (sort === "price_asc")
@@ -143,13 +329,13 @@ export default function ListingsGrid({ listings }: { listings: Listing[] }) {
       const bt = b.write_dt ? new Date(b.write_dt).getTime() : 0;
       return bt - at;
     });
-  }, [bySource, category, sort]);
+  }, [bySource, activeCategory, sort]);
 
   const sourceCounts = useMemo(() => {
     const counts: Record<string, number> = {};
-    for (const l of byPrice) counts[l.source] = (counts[l.source] ?? 0) + 1;
+    for (const l of byBorough) counts[l.source] = (counts[l.source] ?? 0) + 1;
     return counts;
-  }, [byPrice]);
+  }, [byBorough]);
 
   const totalPages = Math.max(1, Math.ceil(visible.length / pageSize));
   const currentPage = Math.min(page, totalPages);
@@ -173,20 +359,31 @@ export default function ListingsGrid({ listings }: { listings: Listing[] }) {
         <p className="mt-1 text-sm text-muted-foreground theme8bit:[font-family:var(--font-pixel)] theme8bit:leading-relaxed">
           {listings.length} listings{" "}
           <span className="line-through">scraped</span> from HeyKorean, Zillow,
-          StreetEasy, Craigslist, and Facebook Marketplace. Mostly{" "}
+          StreetEasy, Craigslist, Facebook Marketplace, and Reddit. Mostly{" "}
           <span className="text-red-600 dark:text-red-400">under $2000.</span>
         </p>
       </header>
 
+      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
+        <span className="shrink-0 text-sm font-medium text-muted-foreground theme8bit:[font-family:var(--font-pixel)] theme8bit:text-xs">
+          Price ${priceRange[0].toLocaleString()} – ${priceRange[1].toLocaleString()}
+        </span>
+        <Slider
+          className="w-full min-w-0 flex-1 theme8bit:**:data-[slot=slider-track]:rounded-none theme8bit:**:data-[slot=slider-thumb]:rounded-none"
+          min={PRICE_SLIDER_MIN}
+          max={PRICE_SLIDER_MAX}
+          step={PRICE_SLIDER_STEP}
+          minStepsBetweenValues={1}
+          value={priceRange}
+          onValueChange={setPriceRange}
+        />
+      </div>
+
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <FilterChip
-          label={`All sources (${byPrice.length})`}
+          label={`All sources (${byBorough.length})`}
           active={source === "all"}
-          onClick={() => {
-            setSource("all");
-            setCategory("all");
-            setPage(1);
-          }}
+          onClick={() => setSource("all")}
         />
         {SOURCE_KEYS.map((key) => (
           <SourceFilterChip
@@ -194,65 +391,59 @@ export default function ListingsGrid({ listings }: { listings: Listing[] }) {
             source={key}
             count={sourceCounts[key] ?? 0}
             active={source === key}
-            onClick={() => {
-              setSource(key);
-              setCategory("all");
-              setPage(1);
-            }}
+            onClick={() => setSource(key)}
           />
         ))}
-        <label className="ml-auto flex cursor-pointer items-center gap-2 text-sm font-medium text-muted-foreground">
-          <Switch
-            className="rounded-none **:data-[slot=switch-thumb]:rounded-none"
-            checked={capPrice}
-            onCheckedChange={(checked) => {
-              setCapPrice(checked);
-              setPage(1);
-            }}
+        <div className="ml-auto">
+          <Select
+            value={sort}
+            items={SORT_LABELS}
+            onValueChange={(value) => setSort(value as SortKey)}
+          >
+            <SelectTrigger className="w-[190px] rounded-none">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {(Object.entries(SORT_LABELS) as [SortKey, string][]).map(
+                ([key, label]) => (
+                  <SelectItem key={key} value={key}>
+                    {label}
+                  </SelectItem>
+                ),
+              )}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <FilterChip
+          label={`All locations (${byPrice.length})`}
+          active={activeBorough === "all"}
+          onClick={() => setBorough("all")}
+        />
+        {boroughs.map(([key, count]) => (
+          <FilterChip
+            key={key}
+            label={`${BOROUGH_LABELS[key]} (${count})`}
+            active={activeBorough === key}
+            onClick={() => setBorough(key)}
           />
-          Under $2,000
-        </label>
-        <Select
-          value={sort}
-          items={SORT_LABELS}
-          onValueChange={(value) => {
-            setSort(value as SortKey);
-            setPage(1);
-          }}
-        >
-          <SelectTrigger className="w-[190px] rounded-none">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {(Object.entries(SORT_LABELS) as [SortKey, string][]).map(
-              ([key, label]) => (
-                <SelectItem key={key} value={key}>
-                  {label}
-                </SelectItem>
-              ),
-            )}
-          </SelectContent>
-        </Select>
+        ))}
       </div>
 
       <div className="mb-6 flex flex-wrap items-center gap-2">
         <FilterChip
           label={`All types (${bySource.length})`}
-          active={category === "all"}
-          onClick={() => {
-            setCategory("all");
-            setPage(1);
-          }}
+          active={activeCategory === "all"}
+          onClick={() => setCategory("all")}
         />
         {categories.map(([name, count]) => (
           <FilterChip
             key={name}
             label={`${name} (${count})`}
-            active={category === name}
-            onClick={() => {
-              setCategory(name);
-              setPage(1);
-            }}
+            active={activeCategory === name}
+            onClick={() => setCategory(name)}
           />
         ))}
         <div className="ml-auto flex flex-wrap items-center gap-2">
@@ -262,10 +453,7 @@ export default function ListingsGrid({ listings }: { listings: Listing[] }) {
           <Select
             value={String(pageSize)}
             items={DISPLAY_COUNT_LABELS}
-            onValueChange={(value) => {
-              setPageSize(Number(value));
-              setPage(1);
-            }}
+            onValueChange={(value) => setPageSize(Number(value))}
           >
             <SelectTrigger className="w-[72px] rounded-none">
               <SelectValue />

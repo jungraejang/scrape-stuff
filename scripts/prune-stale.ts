@@ -4,7 +4,7 @@
  * job so the site never shows outdated rows even if a scraper fails.
  *
  * Only sources where write_dt is a posting date are age-pruned:
- *   - heykorean, zillow, craigslist
+ *   - heykorean, zillow, craigslist, reddit
  * Skipped on purpose:
  *   - streeteasy: write_dt is an availability date on still-active listings;
  *     off-market rows are pruned by its scraper (pruneUnseen).
@@ -15,7 +15,7 @@
  */
 import { getCutoff, getServiceClient, pruneStale, revalidateListings } from "./lib";
 
-const AGE_PRUNED_SOURCES = ["heykorean", "zillow", "craigslist"] as const;
+const AGE_PRUNED_SOURCES = ["heykorean", "zillow", "craigslist", "reddit"] as const;
 
 async function main() {
   const cutoff = getCutoff();

@@ -6,7 +6,7 @@ config({ path: ".env.local" });
 
 /** Row shape of the unified public.listings table. */
 export interface ListingRow {
-  source: "heykorean" | "zillow" | "streeteasy" | "craigslist" | "facebook";
+  source: "heykorean" | "zillow" | "streeteasy" | "craigslist" | "facebook" | "reddit";
   ext_id: string;
   title: string | null;
   address: string | null;

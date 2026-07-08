@@ -1,10 +1,11 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 export interface Listing {
-  source: "heykorean" | "zillow" | "streeteasy" | "craigslist" | "facebook";
+  source: "heykorean" | "zillow" | "streeteasy" | "craigslist" | "facebook" | "reddit";
   ext_id: string;
   title: string | null;
   address: string | null;
+  borough: string | null;
   price: number | null;
   category: string | null;
   beds: number | null;

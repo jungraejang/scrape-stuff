@@ -15,6 +15,7 @@ const STEPS: [name: string, script: string][] = [
   ["streeteasy", "scripts/scrape-streeteasy.ts"],
   ["craigslist", "scripts/scrape-craigslist.ts"],
   ["facebook", "scripts/scrape-facebook.ts"],
+  ["reddit", "scripts/scrape-reddit.ts"],
 ];
 
 function runStep(script: string): Promise<number> {
