@@ -32,6 +32,10 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.local.example
+
+# saved Facebook session (contains login cookies - never commit)
+fb-session.json
 
 # vercel
 .vercel
