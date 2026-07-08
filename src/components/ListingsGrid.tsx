@@ -100,7 +100,7 @@ export default function ListingsGrid({ listings }: { listings: Listing[] }) {
   const [source, setSource] = useState<string>("all");
   const [category, setCategory] = useState<string>("all");
   const [sort, setSort] = useState<SortKey>("newest");
-  const [capPrice, setCapPrice] = useState(false);
+  const [capPrice, setCapPrice] = useState(true);
   const [view, setView] = useState<ViewMode>("cards");
   const [pageSize, setPageSize] = useState<number>(24);
   const [page, setPage] = useState(1);
@@ -173,7 +173,8 @@ export default function ListingsGrid({ listings }: { listings: Listing[] }) {
         <p className="mt-1 text-sm text-muted-foreground theme8bit:[font-family:var(--font-pixel)] theme8bit:leading-relaxed">
           {listings.length} listings{" "}
           <span className="line-through">scraped</span> from HeyKorean, Zillow,
-          StreetEasy, Craigslist, and Facebook Marketplace
+          StreetEasy, Craigslist, and Facebook Marketplace. Mostly{" "}
+          <span className="text-red-600 dark:text-red-400">under $2000.</span>
         </p>
       </header>
 

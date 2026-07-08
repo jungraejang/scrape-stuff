@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "prune": "node --use-system-ca --import tsx scripts/prune-stale.ts",
+    "scrape:all": "node --use-system-ca --import tsx scripts/run-all.ts",
     "scrape": "node --use-system-ca --import tsx scripts/scrape.ts",
     "scrape:zillow": "node --use-system-ca --import tsx scripts/scrape-zillow.ts",
     "scrape:streeteasy": "node --use-system-ca --import tsx scripts/scrape-streeteasy.ts",

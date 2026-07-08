@@ -37,6 +37,9 @@ yarn-error.log*
 # saved Facebook session (contains login cookies - never commit)
 fb-session.json
 
+# scheduled scrape logs
+/logs/
+
 # vercel
 .vercel
 

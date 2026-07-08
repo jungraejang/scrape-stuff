@@ -45,9 +45,19 @@ const FILTER_STATE = {
 };
 
 const BASE_URL = "https://www.zillow.com/new-york-ny/rentals/";
-const PAGE_DELAY_MS = 1500;
+// Randomized 4-8s between pages: fast enough for a nightly run (~40 pages
+// take ~4 min), slow and irregular enough to stay under Zillow's rate limit.
+const PAGE_DELAY_MIN_MS = 4000;
+const PAGE_DELAY_MAX_MS = 8000;
+const REGION_DELAY_MS = 15_000;
+const RATE_LIMIT_RETRIES = 3;
+const RATE_LIMIT_BACKOFF_MS = 60_000; // 1 min, doubled each retry
 const MAX_PAGES_PER_REGION = 20; // Zillow's hard cap per search
 const DRY_RUN = process.argv.includes("--dry-run");
+
+function pageDelay(): number {
+  return PAGE_DELAY_MIN_MS + Math.random() * (PAGE_DELAY_MAX_MS - PAGE_DELAY_MIN_MS);
+}
 
 interface ZillowUnit {
   price?: string;
@@ -177,10 +187,20 @@ async function fetchSearchPage(regionId: number, page: number): Promise<SearchPa
 
   const pagePart = page > 1 ? `${page}_p/` : "";
   const url = `${BASE_URL}${pagePart}?searchQueryState=${encodeURIComponent(JSON.stringify(state))}`;
-  const res = await fetch(url, {
-    headers: { ...BROWSER_HEADERS, accept: "text/html" },
-    signal: AbortSignal.timeout(30_000),
-  });
+  let res: Response;
+  for (let attempt = 0; ; attempt++) {
+    res = await fetch(url, {
+      headers: { ...BROWSER_HEADERS, accept: "text/html" },
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (res.status !== 429) break;
+    if (attempt >= RATE_LIMIT_RETRIES) {
+      throw new Error(`HTTP 429 fetching region ${regionId} page ${page} (still rate-limited after ${RATE_LIMIT_RETRIES} backoffs)`);
+    }
+    const waitMs = RATE_LIMIT_BACKOFF_MS * 2 ** attempt;
+    console.warn(`  Rate limited (429) on region ${regionId} page ${page}; waiting ${waitMs / 1000}s before retry ${attempt + 1}/${RATE_LIMIT_RETRIES}...`);
+    await sleep(waitMs);
+  }
   if (!res.ok) {
     throw new Error(`HTTP ${res.status} fetching region ${regionId} page ${page} (blocked by Zillow?)`);
   }
@@ -233,8 +253,10 @@ async function main() {
       console.log(
         `Region ${regionId} page ${page}/${totalPages}: ${results.length} results, ${kept} kept (total: ${rowsById.size})`
       );
-      await sleep(PAGE_DELAY_MS);
+      await sleep(pageDelay());
     }
+    // Extra breather between regions: each region change starts a new search.
+    if (regionId !== REGION_IDS[REGION_IDS.length - 1]) await sleep(REGION_DELAY_MS);
   }
 
   const rows = [...rowsById.values()];
