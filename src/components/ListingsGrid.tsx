@@ -168,7 +168,7 @@ export default function ListingsGrid({ listings }: { listings: Listing[] }) {
       <header className="mb-6">
         <h1 className="flex items-center gap-2.5 text-2xl font-bold tracking-tight sm:text-3xl theme8bit:uppercase theme8bit:tracking-widest theme8bit:text-[#f4d35e] theme8bit:text-lg sm:theme8bit:text-xl theme8bit:[font-family:var(--font-pixel)]">
           <Scroll className="h-7 w-7 shrink-0 text-muted-foreground sm:h-8 sm:w-8" />
-          The NYC Master List
+          Jungraeslist
         </h1>
         <p className="mt-1 text-sm text-muted-foreground theme8bit:[font-family:var(--font-pixel)] theme8bit:leading-relaxed">
           {listings.length} listings{" "}
