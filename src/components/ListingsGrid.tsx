@@ -168,7 +168,7 @@ export default function ListingsGrid({ listings }: { listings: Listing[] }) {
       <header className="mb-6">
         <h1 className="flex items-center gap-2.5 text-2xl font-bold tracking-tight sm:text-3xl theme8bit:uppercase theme8bit:tracking-widest theme8bit:text-[#f4d35e] theme8bit:text-lg sm:theme8bit:text-xl theme8bit:[font-family:var(--font-pixel)]">
           <Scroll className="h-7 w-7 shrink-0 text-muted-foreground sm:h-8 sm:w-8" />
-          The Master List
+          The NYC Master List
         </h1>
         <p className="mt-1 text-sm text-muted-foreground theme8bit:[font-family:var(--font-pixel)] theme8bit:leading-relaxed">
           {listings.length} listings{" "}
@@ -187,7 +187,7 @@ export default function ListingsGrid({ listings }: { listings: Listing[] }) {
             setPage(1);
           }}
         />
-        {(SOURCE_KEYS).map((key) => (
+        {SOURCE_KEYS.map((key) => (
           <SourceFilterChip
             key={key}
             source={key}
@@ -626,14 +626,17 @@ function ListingCard({ listing }: { listing: Listing }) {
 function ListingRow({ listing }: { listing: Listing }) {
   const posted = formatPosted(listing.write_dt);
   const meta = listingMeta(listing);
-  const open = () =>
-    window.open(listing.url, "_blank", "noopener,noreferrer");
+  const open = () => window.open(listing.url, "_blank", "noopener,noreferrer");
 
   return (
     <TableRow className="cursor-pointer" onClick={open}>
       <TableCell>
         <div className="relative h-16 w-24 overflow-hidden rounded-md bg-muted">
-          <ListingPhoto listing={listing} sizes="96px" className="object-cover" />
+          <ListingPhoto
+            listing={listing}
+            sizes="96px"
+            className="object-cover"
+          />
         </div>
       </TableCell>
       <TableCell className="max-w-[380px] whitespace-normal">

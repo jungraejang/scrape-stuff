@@ -22,6 +22,12 @@ const nextConfig: NextConfig = {
         hostname: "photos.streeteasy.com",
       },
       {
+        // Re-hosted StreetEasy photos (their own CDN blocks hotlinking).
+        protocol: "https",
+        hostname: "*.supabase.co",
+        pathname: "/storage/v1/object/public/**",
+      },
+      {
         protocol: "https",
         hostname: "images.craigslist.org",
       },

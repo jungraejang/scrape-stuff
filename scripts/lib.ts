@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { config } from "dotenv";
+import { detectBorough, type Borough } from "./borough";
 
 config({ path: ".env.local" });
 
@@ -20,6 +21,8 @@ export interface ListingRow {
   write_dt: string | null;
   url: string;
   scraped_at: string;
+  /** Derived by upsertRows; null = outside NYC or undetectable. */
+  borough?: Borough | null;
 }
 
 export const BROWSER_HEADERS = {
@@ -118,6 +121,9 @@ export async function revalidateListings(): Promise<void> {
 }
 
 export async function upsertRows(db: SupabaseClient, rows: ListingRow[]): Promise<number> {
+  for (const row of rows) {
+    row.borough ??= detectBorough(row);
+  }
   const BATCH_SIZE = 500;
   let upserted = 0;
   for (let i = 0; i < rows.length; i += BATCH_SIZE) {

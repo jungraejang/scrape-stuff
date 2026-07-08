@@ -11,6 +11,7 @@ create table public.listings (
   ext_id text not null,           -- listing id on the source site
   title text,
   address text,
+  borough text,                   -- manhattan/brooklyn/queens/bronx/staten island, null = outside NYC or unknown
   price int,
   category text,                  -- Studio / 1BR / 2BR / ...
   beds numeric,
@@ -27,6 +28,7 @@ create table public.listings (
 
 create index listings_write_dt_idx on public.listings (write_dt desc nulls last);
 create index listings_source_idx on public.listings (source);
+create index listings_borough_idx on public.listings (borough);
 
 -- Row Level Security: anyone can read (frontend uses the anon key),
 -- but only the service role key (used by the scrapers) can write.

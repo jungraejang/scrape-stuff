@@ -11,6 +11,7 @@
  * Run with: npm run scrape:streeteasy
  * Dry run (no database writes): npm run scrape:streeteasy -- --dry-run
  */
+import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   BROWSER_HEADERS,
   getServiceClient,
@@ -20,12 +21,20 @@ import {
   upsertRows,
   type ListingRow,
 } from "./lib";
+import {
+  ensurePhotoBucket,
+  listStoredPhotos,
+  pruneOrphanPhotos,
+  publicPhotoUrl,
+  uploadPhoto,
+} from "./photo-store";
 
 const API_URL = "https://api-v6.streeteasy.com/";
 const AREAS = [100, 200, 300, 400];
 const PRICE_MAX = 2000;
 const PER_PAGE = 500;
 const PAGE_DELAY_MS = 1000;
+const PHOTO_DELAY_MS = 300;
 const DRY_RUN = process.argv.includes("--dry-run");
 
 const QUERY = `
@@ -91,15 +100,15 @@ interface SeResponse {
   };
 }
 
-function toRow(node: SeNode, scrapedAt: string): ListingRow {
+function toRow(node: SeNode, scrapedAt: string): { row: ListingRow; photoKey: string | null } {
   const streetUnit = [node.street, node.unit ? `#${node.unit}` : null].filter(Boolean).join(" ");
   const address = [streetUnit, node.areaName].filter(Boolean).join(", ") || null;
   const bath =
     node.fullBathroomCount != null || node.halfBathroomCount != null
       ? (node.fullBathroomCount ?? 0) + 0.5 * (node.halfBathroomCount ?? 0)
       : null;
-  const photoKey = node.leadMedia?.photo?.key;
-  return {
+  const photoKey = node.leadMedia?.photo?.key ?? null;
+  const row: ListingRow = {
     source: "streeteasy",
     ext_id: node.id,
     title: address ?? `Listing ${node.id}`,
@@ -109,13 +118,69 @@ function toRow(node: SeNode, scrapedAt: string): ListingRow {
     beds: node.bedroomCount,
     bath,
     size_sqft: null,
-    pictures: photoKey ? [`https://photos.streeteasy.com/${photoKey}_1.jpg`] : [],
+    pictures: [],
     agent_name: node.sourceGroupLabel,
     posted_by: null,
     write_dt: node.availableAt ? new Date(`${node.availableAt}T00:00:00`).toISOString() : null,
     url: `https://streeteasy.com${node.urlPath ?? ""}`,
     scraped_at: scrapedAt,
   };
+  return { row, photoKey };
+}
+
+/**
+ * photos.streeteasy.com is behind PerimeterX, so visitors' browsers can't
+ * hotlink it. The same photo keys are served openly by Zillow's CDN
+ * (StreetEasy is Zillow-owned), so we download from there once and re-host
+ * in the public Supabase Storage bucket.
+ */
+function sourcePhotoUrl(photoKey: string): string {
+  return `https://photos.zillowstatic.com/fp/${photoKey}-se_large_800_400.jpg`;
+}
+
+async function mirrorPhotos(
+  db: SupabaseClient,
+  entries: { row: ListingRow; photoKey: string | null }[]
+): Promise<void> {
+  await ensurePhotoBucket(db);
+  const stored = await listStoredPhotos(db, "streeteasy");
+
+  let reused = 0;
+  let downloaded = 0;
+  let failed = 0;
+  for (const { row, photoKey } of entries) {
+    if (!photoKey) continue;
+    const name = `${photoKey}.jpg`;
+    const path = `streeteasy/${name}`;
+
+    if (!stored.has(name)) {
+      try {
+        const res = await fetch(sourcePhotoUrl(photoKey), {
+          headers: BROWSER_HEADERS,
+          signal: AbortSignal.timeout(20_000),
+        });
+        if (!res.ok || !res.headers.get("content-type")?.startsWith("image/")) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        await uploadPhoto(db, path, Buffer.from(await res.arrayBuffer()), "image/jpeg");
+        stored.add(name);
+        downloaded++;
+      } catch (err) {
+        failed++;
+        console.warn(`  photo ${photoKey}: ${(err as Error).message}`);
+        // Leave the original CDN URL; it at least opens when clicked through.
+        row.pictures = [`https://photos.streeteasy.com/${photoKey}_1.jpg`];
+        continue;
+      } finally {
+        // Throttle only actual downloads to stay clear of CDN rate limits.
+        await sleep(PHOTO_DELAY_MS);
+      }
+    } else {
+      reused++;
+    }
+    row.pictures = [publicPhotoUrl(db, path)];
+  }
+  console.log(`Photos: ${downloaded} downloaded, ${reused} already stored, ${failed} failed.`);
 }
 
 async function fetchPage(page: number): Promise<SeResponse["data"]> {
@@ -166,10 +231,10 @@ async function main() {
   console.log("Scraping StreetEasy active rentals (max $2,000/mo, NYC)");
   if (DRY_RUN) console.log("DRY RUN: no database writes will be made.\n");
 
-  const rowsById = new Map<string, ListingRow>();
+  const entriesById = new Map<string, { row: ListingRow; photoKey: string | null }>();
   let totalCount = Infinity;
 
-  for (let page = 1; rowsById.size < totalCount; page++) {
+  for (let page = 1; entriesById.size < totalCount; page++) {
     const data = await fetchPage(page);
     totalCount = data!.searchRentals.totalCount;
     const nodes = data!.searchRentals.edges
@@ -178,26 +243,37 @@ async function main() {
     if (nodes.length === 0) break;
 
     for (const node of nodes) {
-      const row = toRow(node, scrapedAt);
-      rowsById.set(row.ext_id, row);
+      const entry = toRow(node, scrapedAt);
+      entriesById.set(entry.row.ext_id, entry);
     }
-    console.log(`Page ${page}: ${nodes.length} listings (total kept: ${rowsById.size}/${totalCount})`);
-    if (rowsById.size < totalCount) await sleep(PAGE_DELAY_MS);
+    console.log(`Page ${page}: ${nodes.length} listings (total kept: ${entriesById.size}/${totalCount})`);
+    if (entriesById.size < totalCount) await sleep(PAGE_DELAY_MS);
   }
 
-  const rows = [...rowsById.values()];
-  console.log(`\n${rows.length} unique active listings.`);
+  const entries = [...entriesById.values()];
+  console.log(`\n${entries.length} unique active listings.`);
 
   if (DRY_RUN) {
-    console.log("Sample row:", JSON.stringify(rows[0], null, 2));
+    console.log("Sample row:", JSON.stringify(entries[0], null, 2));
     return;
   }
 
   const db = getServiceClient();
-  const upserted = await upsertRows(db, rows);
+  await mirrorPhotos(db, entries);
+
+  const upserted = await upsertRows(db, entries.map((e) => e.row));
   // Listings no longer in search results have gone off market.
   const pruned = await pruneUnseen(db, "streeteasy", scrapedAt);
-  console.log(`Upserted ${upserted} rows, pruned ${pruned} off-market rows. Done.`);
+
+  // Drop stored photos whose listing went off market.
+  const keep = new Set(
+    entries.filter((e) => e.photoKey).map((e) => `${e.photoKey}.jpg`)
+  );
+  const orphans = await pruneOrphanPhotos(db, "streeteasy", keep);
+
+  console.log(
+    `Upserted ${upserted} rows, pruned ${pruned} off-market rows, removed ${orphans} orphaned photos. Done.`
+  );
   await revalidateListings();
 }
 
