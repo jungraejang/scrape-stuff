@@ -23,7 +23,7 @@ const pressStart2P = Press_Start_2P({
 });
 
 export const metadata: Metadata = {
-  title: "Jungraeslist",
+  title: "JR's List",
   description: "Sub-3k rental listings in NYC",
 };
 

@@ -2,10 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
-import { LayoutGrid, List, Scroll } from "lucide-react";
+import { LayoutGrid, List, Scroll, Search, X } from "lucide-react";
 import type { Listing } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Slider } from "@/components/ui/slider";
@@ -148,7 +149,10 @@ const DEFAULT_FILTERS: SavedFilters = {
 function clampPrice(n: number): number {
   return Math.min(
     PRICE_SLIDER_MAX,
-    Math.max(PRICE_SLIDER_MIN, Math.round(n / PRICE_SLIDER_STEP) * PRICE_SLIDER_STEP),
+    Math.max(
+      PRICE_SLIDER_MIN,
+      Math.round(n / PRICE_SLIDER_STEP) * PRICE_SLIDER_STEP,
+    ),
   );
 }
 
@@ -163,11 +167,15 @@ function normalizePriceRange(raw: unknown): [number, number] {
   return DEFAULT_PRICE_RANGE;
 }
 
-function readPriceRange(parsed: Partial<SavedFilters> & { capPrice?: boolean }): [number, number] {
+function readPriceRange(
+  parsed: Partial<SavedFilters> & { capPrice?: boolean },
+): [number, number] {
   if (parsed.priceRange) return normalizePriceRange(parsed.priceRange);
   // Migrate saved settings from the old Under $2,000 toggle.
   if (typeof parsed.capPrice === "boolean") {
-    return parsed.capPrice ? DEFAULT_PRICE_RANGE : [PRICE_SLIDER_MIN, PRICE_SLIDER_MAX];
+    return parsed.capPrice
+      ? DEFAULT_PRICE_RANGE
+      : [PRICE_SLIDER_MIN, PRICE_SLIDER_MAX];
   }
   return DEFAULT_PRICE_RANGE;
 }
@@ -222,7 +230,20 @@ function readSavedFilters(): SavedFilters {
 }
 
 function toggleValue(list: string[], value: string): string[] {
-  return list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
+  return list.includes(value)
+    ? list.filter((v) => v !== value)
+    : [...list, value];
+}
+
+/**
+ * Every whitespace-separated word in the query must appear somewhere in the
+ * listing's title or address, so "astoria 2br" matches "2BR apartment in
+ * Astoria".
+ */
+function matchesSearch(listing: Listing, words: string[]): boolean {
+  const haystack =
+    `${listing.title ?? ""} ${listing.address ?? ""}`.toLowerCase();
+  return words.every((word) => haystack.includes(word));
 }
 
 /**
@@ -252,7 +273,22 @@ export default function ListingsGrid({
 }) {
   const [filters, setFilters] = useState<SavedFilters>(DEFAULT_FILTERS);
   const [page, setPage] = useState(1);
+  // Search is deliberately not persisted to localStorage: a stale query from
+  // a previous visit silently hiding most listings would be confusing.
+  const [searchInput, setSearchInput] = useState("");
+  const [query, setQuery] = useState("");
   const filtersHydrated = useRef(false);
+
+  // Debounce so filtering (and page reset) doesn't run on every keystroke.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setQuery((prev) => {
+        if (prev !== searchInput) setPage(1);
+        return searchInput;
+      });
+    }, 200);
+    return () => clearTimeout(t);
+  }, [searchInput]);
 
   useEffect(() => {
     // Hydrate filter UI from localStorage after mount (avoids SSR mismatch).
@@ -261,7 +297,15 @@ export default function ListingsGrid({
     filtersHydrated.current = true;
   }, []);
 
-  const { sources, boroughs: selectedBoroughs, categories: selectedCategories, sort, priceRange, view, pageSize } = filters;
+  const {
+    sources,
+    boroughs: selectedBoroughs,
+    categories: selectedCategories,
+    sort,
+    priceRange,
+    view,
+    pageSize,
+  } = filters;
   const toggleSource = (value: string) => {
     setFilters((f) => ({ ...f, sources: toggleValue(f.sources, value) }));
     setPage(1);
@@ -304,15 +348,23 @@ export default function ListingsGrid({
     setPage(1);
   };
 
+  // Search runs first so every downstream count (borough, source, type chips)
+  // reflects the query.
+  const bySearch = useMemo(() => {
+    const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+    if (words.length === 0) return listings;
+    return listings.filter((l) => matchesSearch(l, words));
+  }, [listings, query]);
+
   // Listings without a price are kept; they can't be proven to be out of range.
   const byPrice = useMemo(() => {
     const [min, max] = priceRange;
     const isFullRange = min <= PRICE_SLIDER_MIN && max >= PRICE_SLIDER_MAX;
-    if (isFullRange) return listings;
-    return listings.filter(
+    if (isFullRange) return bySearch;
+    return bySearch.filter(
       (l) => l.price == null || (l.price >= min && l.price <= max),
     );
-  }, [listings, priceRange]);
+  }, [bySearch, priceRange]);
 
   const boroughs = useMemo(() => {
     const counts = new Map<string, number>();
@@ -320,9 +372,9 @@ export default function ListingsGrid({
       if (!l.borough) continue;
       counts.set(l.borough, (counts.get(l.borough) ?? 0) + 1);
     }
-    return BOROUGH_KEYS.map((key) => [key, counts.get(key) ?? 0] as const).filter(
-      ([, count]) => count > 0,
-    );
+    return BOROUGH_KEYS.map(
+      (key) => [key, counts.get(key) ?? 0] as const,
+    ).filter(([, count]) => count > 0);
   }, [byPrice]);
 
   // Selections that reference options not currently available (e.g. a saved
@@ -402,27 +454,66 @@ export default function ListingsGrid({
 
   return (
     <div className="mx-auto w-full max-w-7xl flex-1 px-4 py-8 sm:px-6">
-      <header className="mb-6">
-        <h1 className="flex items-center gap-2.5 text-2xl font-bold tracking-tight sm:text-3xl theme8bit:uppercase theme8bit:tracking-widest theme8bit:text-[#f4d35e] theme8bit:text-lg sm:theme8bit:text-xl theme8bit:[font-family:var(--font-pixel)]">
-          <Scroll className="h-7 w-7 shrink-0 text-muted-foreground sm:h-8 sm:w-8" />
-          Jungraeslist
-        </h1>
-        <p className="mt-1 text-sm text-muted-foreground theme8bit:[font-family:var(--font-pixel)] theme8bit:leading-relaxed">
-          {listings.length} listings{" "}
-          <span className="line-through">scraped</span> from HeyKorean, Zillow,
-          StreetEasy, Craigslist, Facebook Marketplace, and Reddit. Mostly{" "}
-          <span className="text-red-600 dark:text-red-400">under $3000.</span>
-        </p>
-        {lastUpdated && formatLastUpdated(lastUpdated) && (
-          <p className="mt-1 text-xs text-muted-foreground/80 theme8bit:[font-family:var(--font-pixel)]">
-            Last updated {formatLastUpdated(lastUpdated)}
+      <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h1 className="flex items-center gap-2.5 text-2xl font-bold tracking-tight sm:text-3xl theme8bit:uppercase theme8bit:tracking-widest theme8bit:text-[#f4d35e] theme8bit:text-lg sm:theme8bit:text-xl theme8bit:[font-family:var(--font-pixel)]">
+            <Scroll className="h-7 w-7 shrink-0 text-muted-foreground sm:h-8 sm:w-8" />
+            JR&apos;s List
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground theme8bit:[font-family:var(--font-pixel)] theme8bit:leading-relaxed">
+            {listings.length} NYC housing listings from HeyKorean, Zillow,
+            StreetEasy, Craigslist, Facebook Marketplace, and Reddit. Mostly{" "}
+            <span className="text-red-600 dark:text-red-400">under $3000.</span>
           </p>
-        )}
+          {lastUpdated && formatLastUpdated(lastUpdated) && (
+            <p className="mt-1 text-xs text-muted-foreground/80 theme8bit:[font-family:var(--font-pixel)]">
+              Last updated {formatLastUpdated(lastUpdated)}
+            </p>
+          )}
+        </div>
+        <a
+          href="https://www.linkedin.com/in/jung-rae-jang/"
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="Laid-off dev looking for a job — visit LinkedIn profile"
+          className="shrink-0 transition-opacity hover:opacity-90 theme8bit:border-2 theme8bit:border-black theme8bit:shadow-[4px_4px_0_#000]"
+        >
+          <Image
+            src="/linkedin-post.png"
+            alt="Laid-off dev looking for a job — click for LinkedIn"
+            width={300}
+            height={100}
+            className="rounded-md border theme8bit:rounded-none"
+          />
+        </a>
       </header>
+
+      <div className="relative mb-4 max-w-md">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          type="search"
+          placeholder="Search title or address…"
+          aria-label="Search listings"
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          className="rounded-none pl-9 pr-9 [&::-webkit-search-cancel-button]:hidden"
+        />
+        {searchInput && (
+          <button
+            type="button"
+            aria-label="Clear search"
+            onClick={() => setSearchInput("")}
+            className="absolute right-2 top-1/2 -translate-y-1/2 rounded-sm p-1 text-muted-foreground hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        )}
+      </div>
 
       <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
         <span className="shrink-0 text-sm font-medium text-muted-foreground theme8bit:[font-family:var(--font-pixel)] theme8bit:text-xs">
-          Price ${priceRange[0].toLocaleString()} – ${priceRange[1].toLocaleString()}
+          Price ${priceRange[0].toLocaleString()} – $
+          {priceRange[1].toLocaleString()}
         </span>
         <Slider
           className="w-full min-w-0 flex-1 theme8bit:**:data-[slot=slider-track]:rounded-none theme8bit:**:data-[slot=slider-thumb]:rounded-none"
@@ -549,7 +640,14 @@ export default function ListingsGrid({
         className="mb-6"
       />
 
-      {view === "cards" ? (
+      {visible.length === 0 ? (
+        <div className="flex flex-col items-center gap-1 rounded-md border border-dashed py-16 text-center theme8bit:rounded-none">
+          <p className="text-sm font-medium">No listings found</p>
+          <p className="text-sm text-muted-foreground">
+            Try a different search or loosen the filters.
+          </p>
+        </div>
+      ) : view === "cards" ? (
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 theme8bit:gap-4 theme8bit:border-4 theme8bit:border-black theme8bit:p-2 theme8bit:shadow-[6px_6px_0_#000]">
           {pageItems.map((listing) => (
             <ListingCard
@@ -663,6 +761,45 @@ function FilterChip({
   );
 }
 
+/**
+ * Windowed page numbers with a CONSTANT number of slots (7 when there are
+ * enough pages), so the control doesn't change width as the user moves
+ * between pages. Near the edges the window is padded with page numbers
+ * instead of collapsing:
+ *   1 2 3 4 5 … 20   |   1 … 9 10 11 … 20   |   1 … 16 17 18 19 20
+ */
+function buildPageWindow(
+  currentPage: number,
+  totalPages: number,
+): (number | "ellipsis")[] {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, i) => i + 1);
+  }
+  if (currentPage <= 4) {
+    return [1, 2, 3, 4, 5, "ellipsis", totalPages];
+  }
+  if (currentPage >= totalPages - 3) {
+    return [
+      1,
+      "ellipsis",
+      totalPages - 4,
+      totalPages - 3,
+      totalPages - 2,
+      totalPages - 1,
+      totalPages,
+    ];
+  }
+  return [
+    1,
+    "ellipsis",
+    currentPage - 1,
+    currentPage,
+    currentPage + 1,
+    "ellipsis",
+    totalPages,
+  ];
+}
+
 function ListingsPagination({
   currentPage,
   totalPages,
@@ -678,15 +815,7 @@ function ListingsPagination({
 }) {
   if (totalPages <= 1) return null;
 
-  // Windowed page numbers: 1 ... c-1 c c+1 ... last
-  const pages: (number | "ellipsis")[] = [];
-  for (let p = 1; p <= totalPages; p++) {
-    if (p === 1 || p === totalPages || Math.abs(p - currentPage) <= 1) {
-      pages.push(p);
-    } else if (pages[pages.length - 1] !== "ellipsis") {
-      pages.push("ellipsis");
-    }
-  }
+  const pages = buildPageWindow(currentPage, totalPages);
 
   const atStart = currentPage === 1;
   const atEnd = currentPage === totalPages;

@@ -30,7 +30,8 @@ import {
 } from "./photo-store";
 
 const API_URL = "https://api-v6.streeteasy.com/";
-const AREAS = [100, 200, 300, 400];
+// 100 = Manhattan, 200 = Brooklyn, 300 = Queens, 400 = Bronx, 500 = Staten Island.
+const AREAS = [100, 200, 300, 400, 500];
 const PRICE_MAX = 3000;
 // The API caps any search at 1000 results, so search per price band.
 const PRICE_BANDS: Array<[number | null, number]> = [

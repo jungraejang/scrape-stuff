@@ -24,7 +24,8 @@ import {
 } from "./lib";
 
 // Region ids from the user's Zillow search (regionType 17 = city).
-const REGION_IDS = [270915, 37607, 17182];
+// 270915 = Queens, 37607 = Brooklyn, 17182 = Bronx, 27252 = Staten Island.
+const REGION_IDS = [270915, 37607, 17182, 27252];
 
 // Matches the filters in the captured search URL: for rent, 2+ beds,
 // max $3,000/mo.
