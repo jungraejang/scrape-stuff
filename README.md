@@ -35,11 +35,11 @@ Copy-Item .env.local.example .env.local
 
 Find the values in the Supabase dashboard under **Project Settings -> API Keys**:
 
-| Variable | Value |
-| --- | --- |
-| `NEXT_PUBLIC_SUPABASE_URL` | Project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | `anon` / `public` key (used by the frontend) |
-| `SUPABASE_SERVICE_ROLE_KEY` | `service_role` key (used only by the scrapers — keep secret) |
+| Variable                        | Value                                                        |
+| ------------------------------- | ------------------------------------------------------------ |
+| `NEXT_PUBLIC_SUPABASE_URL`      | Project URL                                                  |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | `anon` / `public` key (used by the frontend)                 |
+| `SUPABASE_SERVICE_ROLE_KEY`     | `service_role` key (used only by the scrapers — keep secret) |
 
 ### 3. Install dependencies
 

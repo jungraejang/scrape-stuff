@@ -33,7 +33,10 @@ const QUERY_PARAMS = {
   item_type: "r",
 };
 const DETAIL_URL_PREFIX = "https://rent.heykorean.com/rent/view/";
-const REQUEST_HEADERS = { ...BROWSER_HEADERS, "x-requested-with": "XMLHttpRequest" };
+const REQUEST_HEADERS = {
+  ...BROWSER_HEADERS,
+  "x-requested-with": "XMLHttpRequest",
+};
 
 const MAX_PAGES = Number(process.env.SCRAPE_MAX_PAGES ?? 100);
 const PAGE_DELAY_MS = 1000;
@@ -67,7 +70,9 @@ function parsePictures(raw: string | null): string[] {
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter((p) => typeof p === "string") : [];
+    return Array.isArray(parsed)
+      ? parsed.filter((p) => typeof p === "string")
+      : [];
   } catch {
     return [];
   }
@@ -75,7 +80,9 @@ function parsePictures(raw: string | null): string[] {
 
 function toRow(listing: ApiListing, scrapedAt: string): ListingRow {
   const agentName = listing.agent
-    ? [listing.agent.first_name, listing.agent.last_name].filter(Boolean).join(" ") || null
+    ? [listing.agent.first_name, listing.agent.last_name]
+        .filter(Boolean)
+        .join(" ") || null
     : null;
   return {
     source: "heykorean",
@@ -138,7 +145,7 @@ async function main() {
     }
 
     console.log(
-      `Page ${page}/${data.last_page}: ${data.data.length} listings, ${fresh.length} within cutoff (total kept: ${rowsById.size})`
+      `Page ${page}/${data.last_page}: ${data.data.length} listings, ${fresh.length} within cutoff (total kept: ${rowsById.size})`,
     );
 
     // Promoted posts can appear out of order, so only stop once an entire
@@ -153,7 +160,7 @@ async function main() {
 
   const rows = dedupeByTitlePrice([...rowsById.values()]);
   console.log(
-    `\nFetched ${pagesFetched} pages, ${rows.length} unique listings after repost dedup (${rowsById.size} before).`
+    `\nFetched ${pagesFetched} pages, ${rows.length} unique listings after repost dedup (${rowsById.size} before).`,
   );
 
   if (DRY_RUN) {

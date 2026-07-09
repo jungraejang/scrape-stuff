@@ -23,7 +23,7 @@ function runStep(script: string): Promise<number> {
     const child = spawn(
       process.execPath,
       ["--use-system-ca", "--import", "tsx", script],
-      { stdio: "inherit" }
+      { stdio: "inherit" },
     );
     child.on("error", () => resolve(1));
     child.on("close", (code) => resolve(code ?? 1));

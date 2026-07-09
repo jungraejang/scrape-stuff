@@ -6,7 +6,13 @@ config({ path: ".env.local" });
 
 /** Row shape of the unified public.listings table. */
 export interface ListingRow {
-  source: "heykorean" | "zillow" | "streeteasy" | "craigslist" | "facebook" | "reddit";
+  source:
+    | "heykorean"
+    | "zillow"
+    | "streeteasy"
+    | "craigslist"
+    | "facebook"
+    | "reddit";
   ext_id: string;
   title: string | null;
   address: string | null;
@@ -51,7 +57,9 @@ export function recoverPriceFromTitle(title: string | null): number | null {
   const match = title?.match(/\$\s*(\d[\d.,oO]*)/);
   if (!match) return null;
   const value = Number(match[1].replace(/[oO]/g, "0").replace(/[.,]/g, ""));
-  return Number.isFinite(value) && value >= MIN_MONTHLY_PRICE && value <= 20000 ? value : null;
+  return Number.isFinite(value) && value >= MIN_MONTHLY_PRICE && value <= 20000
+    ? value
+    : null;
 }
 
 /**
@@ -84,11 +92,13 @@ export function getServiceClient(): SupabaseClient {
     console.error(
       "Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in .env.local.\n" +
         "Copy .env.local.example to .env.local and fill in your Supabase credentials,\n" +
-        "or run with --dry-run to test scraping without a database."
+        "or run with --dry-run to test scraping without a database.",
     );
     process.exit(1);
   }
-  return createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
+  return createClient(supabaseUrl, serviceRoleKey, {
+    auth: { persistSession: false },
+  });
 }
 
 /**
@@ -101,7 +111,7 @@ export async function revalidateListings(): Promise<void> {
   const secret = process.env.REVALIDATE_SECRET;
   if (!siteUrl || !secret) {
     console.warn(
-      "Skipping revalidation: set SITE_URL and REVALIDATE_SECRET in .env.local to auto-refresh the site after scraping."
+      "Skipping revalidation: set SITE_URL and REVALIDATE_SECRET in .env.local to auto-refresh the site after scraping.",
     );
     return;
   }
@@ -111,7 +121,9 @@ export async function revalidateListings(): Promise<void> {
       headers: { "x-revalidate-secret": secret },
     });
     if (!res.ok) {
-      console.warn(`Revalidation request failed: ${res.status} ${res.statusText}`);
+      console.warn(
+        `Revalidation request failed: ${res.status} ${res.statusText}`,
+      );
       return;
     }
     console.log("Triggered site revalidation.");
@@ -120,7 +132,10 @@ export async function revalidateListings(): Promise<void> {
   }
 }
 
-export async function upsertRows(db: SupabaseClient, rows: ListingRow[]): Promise<number> {
+export async function upsertRows(
+  db: SupabaseClient,
+  rows: ListingRow[],
+): Promise<number> {
   for (const row of rows) {
     row.borough ??= detectBorough(row);
   }
@@ -128,7 +143,9 @@ export async function upsertRows(db: SupabaseClient, rows: ListingRow[]): Promis
   let upserted = 0;
   for (let i = 0; i < rows.length; i += BATCH_SIZE) {
     const batch = rows.slice(i, i + BATCH_SIZE);
-    const { error } = await db.from("listings").upsert(batch, { onConflict: "source,ext_id" });
+    const { error } = await db
+      .from("listings")
+      .upsert(batch, { onConflict: "source,ext_id" });
     if (error) {
       throw new Error(`Upsert failed: ${error.message}`);
     }
@@ -141,7 +158,7 @@ export async function upsertRows(db: SupabaseClient, rows: ListingRow[]): Promis
 export async function pruneStale(
   db: SupabaseClient,
   source: ListingRow["source"],
-  cutoff: Date
+  cutoff: Date,
 ): Promise<number> {
   const { count, error } = await db
     .from("listings")
@@ -161,7 +178,7 @@ export async function pruneStale(
 export async function pruneUnseen(
   db: SupabaseClient,
   source: ListingRow["source"],
-  runStartedAt: string
+  runStartedAt: string,
 ): Promise<number> {
   const { count, error } = await db
     .from("listings")

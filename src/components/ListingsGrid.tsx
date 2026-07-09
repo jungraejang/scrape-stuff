@@ -458,7 +458,7 @@ export default function ListingsGrid({
         <div>
           <h1 className="flex items-center gap-2.5 text-2xl font-bold tracking-tight sm:text-3xl theme8bit:uppercase theme8bit:tracking-widest theme8bit:text-[#f4d35e] theme8bit:text-lg sm:theme8bit:text-xl theme8bit:[font-family:var(--font-pixel)]">
             <Scroll className="h-7 w-7 shrink-0 text-muted-foreground sm:h-8 sm:w-8" />
-            JR&apos;s List
+            JR&apos;s List (Beta)
           </h1>
           <p className="mt-1 text-sm text-muted-foreground theme8bit:[font-family:var(--font-pixel)] theme8bit:leading-relaxed">
             {listings.length} NYC housing listings from HeyKorean, Zillow,
@@ -887,6 +887,29 @@ function formatPosted(write_dt: string | null): string | null {
   });
 }
 
+/**
+ * A date in the future means the listing isn't available yet (StreetEasy
+ * uses the availability date as the listing date).
+ */
+function isComingSoon(write_dt: string | null): boolean {
+  if (!write_dt) return false;
+  return new Date(write_dt).getTime() > Date.now();
+}
+
+function ComingSoonBadge({ className }: { className?: string }) {
+  return (
+    <Badge
+      className={cn(
+        "border-transparent bg-amber-500 font-medium text-white",
+        "theme8bit:border-2 theme8bit:border-black theme8bit:shadow-[2px_2px_0_#000]",
+        className,
+      )}
+    >
+      Coming soon
+    </Badge>
+  );
+}
+
 function listingMeta(listing: Listing): string[] {
   return [
     listing.beds != null ? `${listing.beds} bed` : null,
@@ -962,6 +985,9 @@ function ListingCard({ listing }: { listing: Listing }) {
             source={listing.source}
             className="absolute right-3 top-3 theme8bit:backdrop-blur-none"
           />
+          {isComingSoon(listing.write_dt) && (
+            <ComingSoonBadge className="absolute bottom-3 left-3" />
+          )}
         </div>
         <CardContent className="p-4">
           <div className="flex items-baseline justify-between gap-2">
@@ -1037,7 +1063,12 @@ function ListingRow({ listing }: { listing: Listing }) {
           <span className="text-muted-foreground">—</span>
         )}
       </TableCell>
-      <TableCell className="text-muted-foreground">{posted ?? "—"}</TableCell>
+      <TableCell className="text-muted-foreground">
+        <div className="flex items-center gap-2">
+          <span>{posted ?? "—"}</span>
+          {isComingSoon(listing.write_dt) && <ComingSoonBadge />}
+        </div>
+      </TableCell>
       <TableCell className="text-right font-semibold theme8bit:[font-family:var(--font-pixel)]">
         {formatPrice(listing.price)}
         {listing.price != null && (
