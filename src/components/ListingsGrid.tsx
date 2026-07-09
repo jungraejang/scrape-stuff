@@ -360,7 +360,7 @@ export default function ListingsGrid({ listings }: { listings: Listing[] }) {
           {listings.length} listings{" "}
           <span className="line-through">scraped</span> from HeyKorean, Zillow,
           StreetEasy, Craigslist, Facebook Marketplace, and Reddit. Mostly{" "}
-          <span className="text-red-600 dark:text-red-400">under $2000.</span>
+          <span className="text-red-600 dark:text-red-400">under $3000.</span>
         </p>
       </header>
 

@@ -71,7 +71,7 @@ export function dedupeByTitlePrice(rows: ListingRow[]): ListingRow[] {
 }
 
 export function getCutoff(): Date {
-  const months = Number(process.env.SCRAPE_CUTOFF_MONTHS ?? 3);
+  const months = Number(process.env.SCRAPE_CUTOFF_MONTHS ?? 2);
   const cutoff = new Date();
   cutoff.setMonth(cutoff.getMonth() - months);
   return cutoff;

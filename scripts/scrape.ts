@@ -2,7 +2,7 @@
  * HeyKorean rental listings scraper.
  *
  * Fetches listings from the HeyKorean JSON API page by page, keeps only
- * listings newer than the cutoff (default 3 months), upserts them into
+ * listings newer than the cutoff (default 2 months), upserts them into
  * Supabase, and prunes stale rows from the table.
  *
  * Run with: npm run scrape
@@ -27,7 +27,7 @@ import {
 const LIST_API = "https://rent.heykorean.com/api/housing/list";
 const QUERY_PARAMS = {
   category_id: "100,101,102,103,104",
-  price_max: "2000",
+  price_max: "3000",
   area_code: "4480",
   tz_offset: "-240",
   item_type: "r",

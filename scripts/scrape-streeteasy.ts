@@ -4,7 +4,7 @@
  * StreetEasy's GraphQL API (api-v6.streeteasy.com) accepts requests without
  * cookies, so this is a straight API scrape. The filters mirror the user's
  * search: NYC areas 100/200/300/400 (Manhattan, Brooklyn, Queens, Bronx),
- * max $2,000/mo. All returned listings are ACTIVE (currently listed), so
+ * max $3,000/mo. All returned listings are ACTIVE (currently listed), so
  * instead of a listing-age cutoff, rows disappear from the table when they
  * go off market (pruned when not seen in the latest run).
  *
@@ -31,7 +31,14 @@ import {
 
 const API_URL = "https://api-v6.streeteasy.com/";
 const AREAS = [100, 200, 300, 400];
-const PRICE_MAX = 2000;
+const PRICE_MAX = 3000;
+// The API caps any search at 1000 results, so search per price band.
+const PRICE_BANDS: Array<[number | null, number]> = [
+  [null, 2000],
+  [2001, 2500],
+  [2501, 2800],
+  [2801, PRICE_MAX],
+];
 const PER_PAGE = 500;
 const PAGE_DELAY_MS = 1000;
 const PHOTO_DELAY_MS = 300;
@@ -183,7 +190,11 @@ async function mirrorPhotos(
   console.log(`Photos: ${downloaded} downloaded, ${reused} already stored, ${failed} failed.`);
 }
 
-async function fetchPage(page: number): Promise<SeResponse["data"]> {
+async function fetchPage(
+  page: number,
+  priceLo: number | null,
+  priceHi: number,
+): Promise<SeResponse["data"]> {
   const body = {
     query: QUERY,
     variables: {
@@ -191,7 +202,7 @@ async function fetchPage(page: number): Promise<SeResponse["data"]> {
         filters: {
           rentalStatus: "ACTIVE",
           areas: AREAS,
-          price: { lowerBound: null, upperBound: PRICE_MAX },
+          price: { lowerBound: priceLo, upperBound: priceHi },
         },
         page,
         perPage: PER_PAGE,
@@ -228,26 +239,39 @@ async function fetchPage(page: number): Promise<SeResponse["data"]> {
 
 async function main() {
   const scrapedAt = new Date().toISOString();
-  console.log("Scraping StreetEasy active rentals (max $2,000/mo, NYC)");
+  console.log("Scraping StreetEasy active rentals (max $3,000/mo, NYC)");
   if (DRY_RUN) console.log("DRY RUN: no database writes will be made.\n");
 
   const entriesById = new Map<string, { row: ListingRow; photoKey: string | null }>();
-  let totalCount = Infinity;
 
-  for (let page = 1; entriesById.size < totalCount; page++) {
-    const data = await fetchPage(page);
-    totalCount = data!.searchRentals.totalCount;
-    const nodes = data!.searchRentals.edges
-      .map((e) => e.node)
-      .filter((n): n is SeNode => n != null);
-    if (nodes.length === 0) break;
+  // The API silently caps results at 1000 per search, so search one price
+  // band at a time and merge.
+  for (const [lo, hi] of PRICE_BANDS) {
+    let bandSeen = 0;
+    let bandTotal = Infinity;
+    for (let page = 1; bandSeen < bandTotal; page++) {
+      const data = await fetchPage(page, lo, hi);
+      bandTotal = data!.searchRentals.totalCount;
+      if (bandTotal > 1000) {
+        console.warn(
+          `WARNING: price band $${lo ?? 0}-$${hi} has ${bandTotal} results but the API caps at 1000. Split PRICE_BANDS further.`
+        );
+      }
+      const nodes = data!.searchRentals.edges
+        .map((e) => e.node)
+        .filter((n): n is SeNode => n != null);
+      if (nodes.length === 0) break;
 
-    for (const node of nodes) {
-      const entry = toRow(node, scrapedAt);
-      entriesById.set(entry.row.ext_id, entry);
+      bandSeen += nodes.length;
+      for (const node of nodes) {
+        const entry = toRow(node, scrapedAt);
+        entriesById.set(entry.row.ext_id, entry);
+      }
+      console.log(
+        `Price $${lo ?? 0}-$${hi} page ${page}: ${nodes.length} listings (band: ${bandSeen}/${bandTotal}, total: ${entriesById.size})`
+      );
+      await sleep(PAGE_DELAY_MS);
     }
-    console.log(`Page ${page}: ${nodes.length} listings (total kept: ${entriesById.size}/${totalCount})`);
-    if (entriesById.size < totalCount) await sleep(PAGE_DELAY_MS);
   }
 
   const entries = [...entriesById.values()];

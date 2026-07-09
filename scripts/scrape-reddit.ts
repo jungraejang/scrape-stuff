@@ -30,7 +30,7 @@ const FEED_URLS = [
   "https://www.reddit.com/r/NYCapartments/new/.rss?limit=100",
 ];
 const USER_AGENT = "nyc-rental-aggregator/1.0 (personal aggregator)";
-const MAX_PRICE = 20_000;
+const MAX_PRICE = 3000; // align with the other scrapers' search caps
 const DRY_RUN = process.argv.includes("--dry-run");
 
 interface FeedEntry {

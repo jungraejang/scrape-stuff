@@ -28,8 +28,8 @@ import {
 } from "./lib";
 
 const SESSION_FILE = "fb-session.json";
-const SEARCH_URL = "https://www.facebook.com/marketplace/nyc/propertyrentals?maxPrice=2000&exact=false";
-const MAX_PRICE = 2000;
+const SEARCH_URL = "https://www.facebook.com/marketplace/nyc/propertyrentals?maxPrice=3000&exact=false";
+const MAX_PRICE = 3000;
 const SCROLL_ROUNDS = Number(process.env.SCRAPE_FB_SCROLLS ?? 12);
 const SCROLL_DELAY_MS = 2500;
 const DRY_RUN = process.argv.includes("--dry-run");
@@ -78,7 +78,7 @@ function parseCard(card: RawCard, scrapedAt: string): ListingRow | null {
 
 async function main() {
   const scrapedAt = new Date().toISOString();
-  console.log("Scraping Facebook Marketplace NYC rentals (max $2,000/mo)");
+  console.log("Scraping Facebook Marketplace NYC rentals (max $3,000/mo)");
   if (DRY_RUN) console.log("DRY RUN: no database writes will be made.");
 
   const hasSession = existsSync(SESSION_FILE);

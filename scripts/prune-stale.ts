@@ -1,5 +1,5 @@
 /**
- * Removes listings older than the cutoff (SCRAPE_CUTOFF_MONTHS, default 3
+ * Removes listings older than the cutoff (SCRAPE_CUTOFF_MONTHS, default 2
  * months) from the database. Intended to run before the scrapers in a cron
  * job so the site never shows outdated rows even if a scraper fails.
  *

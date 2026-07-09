@@ -37,12 +37,22 @@ const API_BASE = "https://sapi.craigslist.org/web/v8/postings/search/full";
 const BATCH = "3-0-360-0-0";
 const CATEGORY = "apa"; // apartments / housing for rent
 const MAX_RESULTS_PER_SEARCH = 360;
-const MAX_PRICE = 1900; // matches the search filter; scam posts sneak above it
+const MAX_PRICE = 3000; // matches the search filter; scam posts sneak above it
 // One search per price band to stay under the 360-results-per-search cap.
+// Bands narrow as prices rise because inventory is denser there.
 const PRICE_BANDS: Array<[number, number]> = [
   [0, 1200],
   [1201, 1600],
   [1601, 1900],
+  [1901, 2100],
+  [2101, 2300],
+  [2301, 2450],
+  [2451, 2600],
+  [2601, 2750],
+  [2751, 2850],
+  [2851, 2950],
+  [2951, 2999],
+  [3000, 3000],
 ];
 const PAGE_DELAY_MS = 1000;
 const DRY_RUN = process.argv.includes("--dry-run");
@@ -157,7 +167,7 @@ async function fetchBand(minPrice: number, maxPrice: number): Promise<SapiData> 
 async function main() {
   const cutoff = getCutoff();
   const scrapedAt = new Date().toISOString();
-  console.log("Scraping Craigslist NY apartments (max $1,900/mo)");
+  console.log("Scraping Craigslist NY apartments (max $3,000/mo)");
   if (DRY_RUN) console.log("DRY RUN: no database writes will be made.\n");
 
   const rowsById = new Map<string, ListingRow>();

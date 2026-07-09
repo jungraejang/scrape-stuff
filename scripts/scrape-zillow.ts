@@ -7,7 +7,7 @@
  * without cookies. This script fetches search pages region by region
  * (Zillow caps any single search at 20 pages, so searching per region keeps
  * each search under the cap), extracts the embedded results, keeps listings
- * newer than the cutoff (default 3 months), and upserts them into Supabase.
+ * newer than the cutoff (default 2 months), and upserts them into Supabase.
  *
  * Run with: npm run scrape:zillow
  * Dry run (no database writes): npm run scrape:zillow -- --dry-run

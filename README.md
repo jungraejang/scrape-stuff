@@ -2,11 +2,11 @@
 
 Scrapes housing rental listings from [HeyKorean](https://rent.heykorean.com), [Zillow](https://www.zillow.com), [StreetEasy](https://streeteasy.com), and [Craigslist](https://www.craigslist.org), stores them in a single Supabase table, and displays them in a Next.js web app with source and category filters.
 
-- **HeyKorean**: NY area, max $2,000/mo (categories: room share, 1BR, etc.), last 3 months
-- **Zillow**: Queens / Brooklyn / Bronx regions, 2+ beds, max $3,000/mo, last 3 months
-- **StreetEasy**: Manhattan / Brooklyn / Queens / Bronx, max $2,000/mo, all currently active listings
-- **Craigslist**: New York area, apartments/housing, max $1,900/mo, all currently active posts
-- **Facebook Marketplace**: NYC property rentals, max $2,000/mo (requires a one-time Facebook login; see below)
+- **HeyKorean**: NY area, max $3,000/mo (categories: room share, 1BR, etc.), last 2 months
+- **Zillow**: Queens / Brooklyn / Bronx regions, 2+ beds, max $3,000/mo, last 2 months
+- **StreetEasy**: Manhattan / Brooklyn / Queens / Bronx, max $3,000/mo, all currently active listings
+- **Craigslist**: New York area, apartments/housing, max $3,000/mo, all currently active posts
+- **Facebook Marketplace**: NYC property rentals, max $3,000/mo (requires a one-time Facebook login; see below)
 
 ## How it works
 

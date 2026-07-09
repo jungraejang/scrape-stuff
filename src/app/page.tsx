@@ -1,5 +1,5 @@
 import { unstable_cache } from "next/cache";
-import { getSupabaseClient, type Listing } from "@/lib/supabase";
+import { getSupabaseClient, LISTING_COLUMNS, type Listing } from "@/lib/supabase";
 import ListingsGrid from "@/components/ListingsGrid";
 
 // ISR fallback: rebuild at most hourly even if a scraper never pings the
@@ -25,12 +25,22 @@ async function fetchListingsBatch(from: number): Promise<Listing[]> {
   for (let attempt = 0; attempt < FETCH_RETRIES; attempt++) {
     const { data, error } = await supabase
       .from("listings")
-      .select("*")
+      .select(LISTING_COLUMNS)
       .order("write_dt", { ascending: false, nullsFirst: false })
       .order("ext_id", { ascending: true })
       .range(from, from + BATCH - 1);
 
-    if (!error) return (data ?? []) as Listing[];
+    if (!error) {
+      const rows = (data ?? []) as unknown as Listing[];
+      // Keep only the first photo; the UI never shows more, and extra URLs
+      // are the biggest contributor to cache-entry size.
+      for (const row of rows) {
+        if (row.pictures && row.pictures.length > 1) {
+          row.pictures = [row.pictures[0]];
+        }
+      }
+      return rows;
+    }
 
     const message = error.message ?? String(error);
     if (!isTransientFetchError(message) || attempt === FETCH_RETRIES - 1) {
@@ -42,24 +52,27 @@ async function fetchListingsBatch(from: number): Promise<Listing[]> {
 }
 
 /**
- * Fetches every listing, cached under the "listings" tag. Scrapers invalidate
- * this tag via /api/revalidate so the site refreshes right after a run.
+ * Each 1000-row batch is cached as its own entry (unstable_cache keys on the
+ * `from` argument) because a single entry holding every listing exceeds the
+ * cache's 2MB-per-item limit. All entries share the "listings" tag, which
+ * scrapers invalidate via /api/revalidate so the site refreshes after a run.
  * Throws on error/misconfiguration so the caller can render a setup message
  * (thrown errors are not cached).
  */
-const getCachedListings = unstable_cache(
-  async (): Promise<Listing[]> => {
-    const listings: Listing[] = [];
-    for (let from = 0; ; from += BATCH) {
-      const batch = await fetchListingsBatch(from);
-      listings.push(...batch);
-      if (batch.length < BATCH) break;
-    }
-    return listings;
-  },
-  ["listings"],
-  { tags: ["listings"], revalidate: 3600 },
-);
+const getCachedBatch = unstable_cache(fetchListingsBatch, ["listings-batch"], {
+  tags: ["listings"],
+  revalidate: 3600,
+});
+
+async function getCachedListings(): Promise<Listing[]> {
+  const listings: Listing[] = [];
+  for (let from = 0; ; from += BATCH) {
+    const batch = await getCachedBatch(from);
+    listings.push(...batch);
+    if (batch.length < BATCH) break;
+  }
+  return listings;
+}
 
 export default async function Home() {
   if (!getSupabaseClient()) {
