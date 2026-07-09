@@ -661,12 +661,14 @@ export default function ListingsGrid({
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-[112px]"></TableHead>
+                <TableHead className="w-[96px] sm:w-[112px]"></TableHead>
                 <TableHead>Listing</TableHead>
-                <TableHead>Source</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Posted</TableHead>
-                <TableHead className="text-right">Price</TableHead>
+                <TableHead className="hidden sm:table-cell">Source</TableHead>
+                <TableHead className="hidden sm:table-cell">Type</TableHead>
+                <TableHead className="hidden sm:table-cell">Posted</TableHead>
+                <TableHead className="hidden text-right sm:table-cell">
+                  Price
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -1031,7 +1033,7 @@ function ListingRow({ listing }: { listing: Listing }) {
   return (
     <TableRow className="cursor-pointer" onClick={open}>
       <TableCell>
-        <div className="relative h-16 w-24 overflow-hidden rounded-md bg-muted">
+        <div className="relative h-14 w-20 overflow-hidden rounded-md bg-muted sm:h-16 sm:w-24">
           <ListingPhoto
             listing={listing}
             sizes="96px"
@@ -1045,31 +1047,50 @@ function ListingRow({ listing }: { listing: Listing }) {
           target="_blank"
           rel="noopener noreferrer"
           onClick={(e) => e.stopPropagation()}
-          className="line-clamp-1 font-medium hover:underline"
+          className="line-clamp-2 font-medium hover:underline sm:line-clamp-1"
         >
           {listing.title ?? listing.address ?? "Untitled listing"}
         </a>
         <div className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
           {meta.join(" · ") || "No details"}
         </div>
+        {/* Mobile only: the hidden columns collapse into this stacked block. */}
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 sm:hidden">
+          <span className="font-semibold theme8bit:[font-family:var(--font-pixel)]">
+            {formatPrice(listing.price)}
+            {listing.price != null && (
+              <span className="text-xs font-normal text-muted-foreground">
+                /mo
+              </span>
+            )}
+          </span>
+          <SourceBadge source={listing.source} />
+          {listing.category && (
+            <Badge variant="outline">{listing.category}</Badge>
+          )}
+          {isComingSoon(listing.write_dt) && <ComingSoonBadge />}
+          {posted && (
+            <span className="text-xs text-muted-foreground">{posted}</span>
+          )}
+        </div>
       </TableCell>
-      <TableCell>
+      <TableCell className="hidden sm:table-cell">
         <SourceBadge source={listing.source} />
       </TableCell>
-      <TableCell>
+      <TableCell className="hidden sm:table-cell">
         {listing.category ? (
           <Badge variant="outline">{listing.category}</Badge>
         ) : (
           <span className="text-muted-foreground">—</span>
         )}
       </TableCell>
-      <TableCell className="text-muted-foreground">
+      <TableCell className="hidden text-muted-foreground sm:table-cell">
         <div className="flex items-center gap-2">
           <span>{posted ?? "—"}</span>
           {isComingSoon(listing.write_dt) && <ComingSoonBadge />}
         </div>
       </TableCell>
-      <TableCell className="text-right font-semibold theme8bit:[font-family:var(--font-pixel)]">
+      <TableCell className="hidden text-right font-semibold theme8bit:[font-family:var(--font-pixel)] sm:table-cell">
         {formatPrice(listing.price)}
         {listing.price != null && (
           <span className="text-xs font-normal text-muted-foreground">/mo</span>
