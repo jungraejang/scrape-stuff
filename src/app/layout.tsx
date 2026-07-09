@@ -22,8 +22,8 @@ const pressStart2P = Press_Start_2P({
 });
 
 export const metadata: Metadata = {
-  title: "HeyKorean Rentals",
-  description: "Browse scraped HeyKorean housing rental listings",
+  title: "Jungraeslist",
+  description: "Sub-3k rental listings in NYC",
 };
 
 export default function RootLayout({

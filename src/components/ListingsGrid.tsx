@@ -125,9 +125,10 @@ const DISPLAY_COUNT_LABELS: Record<string, string> = {
 const FILTER_STORAGE_KEY = "listings-filters";
 
 type SavedFilters = {
-  source: string;
-  borough: string;
-  category: string;
+  /** Empty array = no filter (show all). */
+  sources: string[];
+  boroughs: string[];
+  categories: string[];
   sort: SortKey;
   priceRange: [number, number];
   view: ViewMode;
@@ -135,9 +136,9 @@ type SavedFilters = {
 };
 
 const DEFAULT_FILTERS: SavedFilters = {
-  source: "all",
-  borough: "all",
-  category: "all",
+  sources: [],
+  boroughs: [],
+  categories: [],
   sort: "newest",
   priceRange: DEFAULT_PRICE_RANGE,
   view: "cards",
@@ -171,25 +172,36 @@ function readPriceRange(parsed: Partial<SavedFilters> & { capPrice?: boolean }):
   return DEFAULT_PRICE_RANGE;
 }
 
+/**
+ * Reads a saved multi-select value. Accepts the old single-string format
+ * ("all" or one value) and migrates it to an array.
+ */
+function readSelection(multi: unknown, legacy: unknown): string[] {
+  if (Array.isArray(multi)) {
+    return multi.filter((v): v is string => typeof v === "string");
+  }
+  if (typeof legacy === "string" && legacy !== "all") return [legacy];
+  return [];
+}
+
 function readSavedFilters(): SavedFilters {
   if (typeof window === "undefined") return DEFAULT_FILTERS;
   try {
     const raw = localStorage.getItem(FILTER_STORAGE_KEY);
     if (!raw) return DEFAULT_FILTERS;
-    const parsed = JSON.parse(raw) as Partial<SavedFilters>;
+    const parsed = JSON.parse(raw) as Partial<SavedFilters> & {
+      source?: string;
+      borough?: string;
+      category?: string;
+    };
     return {
-      source:
-        typeof parsed.source === "string" ? parsed.source : DEFAULT_FILTERS.source,
-      borough:
-        typeof parsed.borough === "string" &&
-        (parsed.borough === "all" ||
-          BOROUGH_KEYS.includes(parsed.borough as (typeof BOROUGH_KEYS)[number]))
-          ? parsed.borough
-          : DEFAULT_FILTERS.borough,
-      category:
-        typeof parsed.category === "string"
-          ? parsed.category
-          : DEFAULT_FILTERS.category,
+      sources: readSelection(parsed.sources, parsed.source).filter((v) =>
+        SOURCE_KEYS.includes(v as Listing["source"]),
+      ),
+      boroughs: readSelection(parsed.boroughs, parsed.borough).filter((v) =>
+        BOROUGH_KEYS.includes(v as (typeof BOROUGH_KEYS)[number]),
+      ),
+      categories: readSelection(parsed.categories, parsed.category),
       sort:
         parsed.sort === "newest" ||
         parsed.sort === "price_asc" ||
@@ -209,6 +221,10 @@ function readSavedFilters(): SavedFilters {
   }
 }
 
+function toggleValue(list: string[], value: string): string[] {
+  return list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
+}
+
 export default function ListingsGrid({ listings }: { listings: Listing[] }) {
   const [filters, setFilters] = useState<SavedFilters>(DEFAULT_FILTERS);
   const [page, setPage] = useState(1);
@@ -221,17 +237,29 @@ export default function ListingsGrid({ listings }: { listings: Listing[] }) {
     filtersHydrated.current = true;
   }, []);
 
-  const { source, borough, category, sort, priceRange, view, pageSize } = filters;
-  const setSource = (value: string) => {
-    setFilters((f) => ({ ...f, source: value, category: "all" }));
+  const { sources, boroughs: selectedBoroughs, categories: selectedCategories, sort, priceRange, view, pageSize } = filters;
+  const toggleSource = (value: string) => {
+    setFilters((f) => ({ ...f, sources: toggleValue(f.sources, value) }));
     setPage(1);
   };
-  const setBorough = (value: string) => {
-    setFilters((f) => ({ ...f, borough: value }));
+  const clearSources = () => {
+    setFilters((f) => ({ ...f, sources: [] }));
     setPage(1);
   };
-  const setCategory = (value: string) => {
-    setFilters((f) => ({ ...f, category: value }));
+  const toggleBorough = (value: string) => {
+    setFilters((f) => ({ ...f, boroughs: toggleValue(f.boroughs, value) }));
+    setPage(1);
+  };
+  const clearBoroughs = () => {
+    setFilters((f) => ({ ...f, boroughs: [] }));
+    setPage(1);
+  };
+  const toggleCategory = (value: string) => {
+    setFilters((f) => ({ ...f, categories: toggleValue(f.categories, value) }));
+    setPage(1);
+  };
+  const clearCategories = () => {
+    setFilters((f) => ({ ...f, categories: [] }));
     setPage(1);
   };
   const setSort = (value: SortKey) => {
@@ -273,21 +301,26 @@ export default function ListingsGrid({ listings }: { listings: Listing[] }) {
     );
   }, [byPrice]);
 
-  const activeBorough =
-    borough === "all" || boroughs.some(([key]) => key === borough)
-      ? borough
-      : "all";
+  // Selections that reference options not currently available (e.g. a saved
+  // borough with zero listings in the price range) are ignored, not deleted:
+  // the raw selection stays in state/localStorage and re-applies when the
+  // option comes back.
+  const activeBoroughs = useMemo(() => {
+    const available = new Set<string>(boroughs.map(([key]) => key));
+    return selectedBoroughs.filter((b) => available.has(b));
+  }, [selectedBoroughs, boroughs]);
 
   const byBorough = useMemo(() => {
-    if (activeBorough === "all") return byPrice;
-    return byPrice.filter((l) => l.borough === activeBorough);
-  }, [byPrice, activeBorough]);
+    if (activeBoroughs.length === 0) return byPrice;
+    const wanted = new Set(activeBoroughs);
+    return byPrice.filter((l) => l.borough != null && wanted.has(l.borough));
+  }, [byPrice, activeBoroughs]);
 
-  const bySource = useMemo(
-    () =>
-      source === "all" ? byBorough : byBorough.filter((l) => l.source === source),
-    [byBorough, source],
-  );
+  const bySource = useMemo(() => {
+    if (sources.length === 0) return byBorough;
+    const wanted = new Set(sources);
+    return byBorough.filter((l) => wanted.has(l.source));
+  }, [byBorough, sources]);
 
   const categories = useMemo(() => {
     const names = new Map<string, number>();
@@ -298,27 +331,21 @@ export default function ListingsGrid({ listings }: { listings: Listing[] }) {
     return [...names.entries()].sort((a, b) => b[1] - a[1]);
   }, [bySource]);
 
-  const activeCategory =
-    category === "all" || categories.some(([name]) => name === category)
-      ? category
-      : "all";
+  const activeCategories = useMemo(() => {
+    const available = new Set(categories.map(([name]) => name));
+    return selectedCategories.filter((c) => available.has(c));
+  }, [selectedCategories, categories]);
 
   useEffect(() => {
     if (!filtersHydrated.current) return;
-    localStorage.setItem(
-      FILTER_STORAGE_KEY,
-      JSON.stringify({
-        ...filters,
-        borough: activeBorough,
-        category: activeCategory,
-      }),
-    );
-  }, [filters, activeBorough, activeCategory]);
+    localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify(filters));
+  }, [filters]);
 
   const visible = useMemo(() => {
     let result = bySource;
-    if (activeCategory !== "all") {
-      result = result.filter((l) => (l.category ?? "Other") === activeCategory);
+    if (activeCategories.length > 0) {
+      const wanted = new Set(activeCategories);
+      result = result.filter((l) => wanted.has(l.category ?? "Other"));
     }
     return [...result].sort((a, b) => {
       if (sort === "price_asc")
@@ -329,7 +356,7 @@ export default function ListingsGrid({ listings }: { listings: Listing[] }) {
       const bt = b.write_dt ? new Date(b.write_dt).getTime() : 0;
       return bt - at;
     });
-  }, [bySource, activeCategory, sort]);
+  }, [bySource, activeCategories, sort]);
 
   const sourceCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -382,16 +409,16 @@ export default function ListingsGrid({ listings }: { listings: Listing[] }) {
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <FilterChip
           label={`All sources (${byBorough.length})`}
-          active={source === "all"}
-          onClick={() => setSource("all")}
+          active={sources.length === 0}
+          onClick={clearSources}
         />
         {SOURCE_KEYS.map((key) => (
           <SourceFilterChip
             key={key}
             source={key}
             count={sourceCounts[key] ?? 0}
-            active={source === key}
-            onClick={() => setSource(key)}
+            active={sources.includes(key)}
+            onClick={() => toggleSource(key)}
           />
         ))}
         <div className="ml-auto">
@@ -419,15 +446,15 @@ export default function ListingsGrid({ listings }: { listings: Listing[] }) {
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <FilterChip
           label={`All locations (${byPrice.length})`}
-          active={activeBorough === "all"}
-          onClick={() => setBorough("all")}
+          active={activeBoroughs.length === 0}
+          onClick={clearBoroughs}
         />
         {boroughs.map(([key, count]) => (
           <FilterChip
             key={key}
             label={`${BOROUGH_LABELS[key]} (${count})`}
-            active={activeBorough === key}
-            onClick={() => setBorough(key)}
+            active={activeBoroughs.includes(key)}
+            onClick={() => toggleBorough(key)}
           />
         ))}
       </div>
@@ -435,15 +462,15 @@ export default function ListingsGrid({ listings }: { listings: Listing[] }) {
       <div className="mb-6 flex flex-wrap items-center gap-2">
         <FilterChip
           label={`All types (${bySource.length})`}
-          active={activeCategory === "all"}
-          onClick={() => setCategory("all")}
+          active={activeCategories.length === 0}
+          onClick={clearCategories}
         />
         {categories.map(([name, count]) => (
           <FilterChip
             key={name}
             label={`${name} (${count})`}
-            active={activeCategory === name}
-            onClick={() => setCategory(name)}
+            active={activeCategories.includes(name)}
+            onClick={() => toggleCategory(name)}
           />
         ))}
         <div className="ml-auto flex flex-wrap items-center gap-2">
