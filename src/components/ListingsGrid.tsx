@@ -225,7 +225,31 @@ function toggleValue(list: string[], value: string): string[] {
   return list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
 }
 
-export default function ListingsGrid({ listings }: { listings: Listing[] }) {
+/**
+ * Fixed locale and timezone so the server-rendered HTML matches the client
+ * hydration output regardless of the visitor's system settings. It's a NYC
+ * site, so Eastern time is the natural choice anyway.
+ */
+function formatLastUpdated(iso: string): string | null {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleString("en-US", {
+    timeZone: "America/New_York",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  });
+}
+
+export default function ListingsGrid({
+  listings,
+  lastUpdated,
+}: {
+  listings: Listing[];
+  lastUpdated?: string | null;
+}) {
   const [filters, setFilters] = useState<SavedFilters>(DEFAULT_FILTERS);
   const [page, setPage] = useState(1);
   const filtersHydrated = useRef(false);
@@ -389,6 +413,11 @@ export default function ListingsGrid({ listings }: { listings: Listing[] }) {
           StreetEasy, Craigslist, Facebook Marketplace, and Reddit. Mostly{" "}
           <span className="text-red-600 dark:text-red-400">under $3000.</span>
         </p>
+        {lastUpdated && formatLastUpdated(lastUpdated) && (
+          <p className="mt-1 text-xs text-muted-foreground/80 theme8bit:[font-family:var(--font-pixel)]">
+            Last updated {formatLastUpdated(lastUpdated)}
+          </p>
+        )}
       </header>
 
       <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">

@@ -74,6 +74,28 @@ async function getCachedListings(): Promise<Listing[]> {
   return listings;
 }
 
+/**
+ * The newest scraped_at across all rows, i.e. when a scraper last refreshed
+ * the data. Shares the "listings" tag so it updates with the listings cache.
+ * Returns null on error; the timestamp is decorative and should never block
+ * the page.
+ */
+const getCachedLastUpdated = unstable_cache(
+  async (): Promise<string | null> => {
+    const supabase = getSupabaseClient();
+    if (!supabase) return null;
+    const { data, error } = await supabase
+      .from("listings")
+      .select("scraped_at")
+      .order("scraped_at", { ascending: false })
+      .limit(1);
+    if (error || !data?.length) return null;
+    return data[0].scraped_at;
+  },
+  ["listings-last-updated"],
+  { tags: ["listings"], revalidate: 3600 },
+);
+
 export default async function Home() {
   if (!getSupabaseClient()) {
     return (
@@ -85,8 +107,10 @@ export default async function Home() {
   }
 
   let listings: Listing[];
+  let lastUpdated: string | null = null;
   try {
     listings = await getCachedListings();
+    lastUpdated = await getCachedLastUpdated();
   } catch (err) {
     return (
       <SetupMessage
@@ -105,7 +129,7 @@ export default async function Home() {
     );
   }
 
-  return <ListingsGrid listings={listings} />;
+  return <ListingsGrid listings={listings} lastUpdated={lastUpdated} />;
 }
 
 function SetupMessage({ title, body }: { title: string; body: string }) {
