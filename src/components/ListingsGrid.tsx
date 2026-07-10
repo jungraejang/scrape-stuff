@@ -660,15 +660,23 @@ export default function ListingsGrid({
         </div>
       ) : (
         <Card className="gap-0 overflow-hidden py-0">
-          <Table>
+          {/* Fixed layout: column widths stay identical across pages and
+              filters instead of shifting with the widest cell's content. */}
+          <Table className="sm:table-fixed">
             <TableHeader>
               <TableRow>
                 <TableHead className="w-[96px] sm:w-[112px]"></TableHead>
                 <TableHead>Listing</TableHead>
-                <TableHead className="hidden sm:table-cell">Source</TableHead>
-                <TableHead className="hidden sm:table-cell">Type</TableHead>
-                <TableHead className="hidden sm:table-cell">Posted</TableHead>
-                <TableHead className="hidden text-right sm:table-cell">
+                <TableHead className="hidden w-[120px] sm:table-cell">
+                  Source
+                </TableHead>
+                <TableHead className="hidden w-[88px] sm:table-cell">
+                  Type
+                </TableHead>
+                <TableHead className="hidden w-[232px] sm:table-cell">
+                  Posted
+                </TableHead>
+                <TableHead className="hidden w-[104px] sm:table-cell">
                   Price
                 </TableHead>
               </TableRow>
@@ -1092,7 +1100,7 @@ function ListingRow({ listing }: { listing: Listing }) {
           {isComingSoon(listing.write_dt) && <ComingSoonBadge />}
         </div>
       </TableCell>
-      <TableCell className="hidden text-right font-semibold theme8bit:[font-family:var(--font-pixel)] sm:table-cell">
+      <TableCell className="hidden font-semibold theme8bit:[font-family:var(--font-pixel)] sm:table-cell">
         {formatPrice(listing.price)}
         {listing.price != null && (
           <span className="text-xs font-normal text-muted-foreground">/mo</span>
