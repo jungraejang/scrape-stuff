@@ -278,6 +278,7 @@ export default function ListingsGrid({
   const [searchInput, setSearchInput] = useState("");
   const [query, setQuery] = useState("");
   const filtersHydrated = useRef(false);
+  const resultsRef = useRef<HTMLDivElement>(null);
 
   // Debounce so filtering (and page reset) doesn't run on every keystroke.
   useEffect(() => {
@@ -449,7 +450,10 @@ export default function ListingsGrid({
 
   const goToPage = (p: number) => {
     setPage(Math.min(Math.max(1, p), totalPages));
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    // Scroll to the top of the results, not the page: on mobile the header,
+    // search box, and filter rows would otherwise sit between the user and
+    // the listings after every page change.
+    resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   return (
@@ -634,13 +638,15 @@ export default function ListingsGrid({
         </div>
       </div>
 
-      <ListingsPagination
-        currentPage={currentPage}
-        totalPages={totalPages}
-        totalItems={visible.length}
-        onPageChange={goToPage}
-        className="mb-6"
-      />
+      <div ref={resultsRef} className="scroll-mt-4">
+        <ListingsPagination
+          currentPage={currentPage}
+          totalPages={totalPages}
+          totalItems={visible.length}
+          onPageChange={goToPage}
+          className="mb-6"
+        />
+      </div>
 
       {visible.length === 0 ? (
         <div className="flex flex-col items-center gap-1 rounded-md border border-dashed py-16 text-center theme8bit:rounded-none">
