@@ -676,7 +676,9 @@ export default function ListingsGrid({
                 <TableHead className="hidden w-[232px] sm:table-cell">
                   Posted
                 </TableHead>
-                <TableHead className="hidden w-[104px] sm:table-cell">
+                {/* The 8-bit pixel font is much wider, so the price column
+                    gets extra room in that theme. */}
+                <TableHead className="hidden w-[104px] theme8bit:w-[150px] sm:table-cell">
                   Price
                 </TableHead>
               </TableRow>
@@ -1100,7 +1102,7 @@ function ListingRow({ listing }: { listing: Listing }) {
           {isComingSoon(listing.write_dt) && <ComingSoonBadge />}
         </div>
       </TableCell>
-      <TableCell className="hidden font-semibold theme8bit:[font-family:var(--font-pixel)] sm:table-cell">
+      <TableCell className="hidden font-semibold theme8bit:[font-family:var(--font-pixel)] theme8bit:text-xs sm:table-cell">
         {formatPrice(listing.price)}
         {listing.price != null && (
           <span className="text-xs font-normal text-muted-foreground">/mo</span>
