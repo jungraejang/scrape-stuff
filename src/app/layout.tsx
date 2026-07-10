@@ -25,6 +25,20 @@ const pressStart2P = Press_Start_2P({
 export const metadata: Metadata = {
   title: "JR's List",
   description: "Sub-3k rental listings in NYC",
+  // Absolute URL base for the Open Graph / Twitter images (file convention
+  // opengraph-image.tsx provides the image itself).
+  metadataBase: process.env.SITE_URL ? new URL(process.env.SITE_URL) : undefined,
+  openGraph: {
+    title: "JR's List",
+    description: "NYC housing listings, mostly under $3,000.",
+    siteName: "JR's List",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "JR's List",
+    description: "NYC housing listings, mostly under $3,000.",
+  },
 };
 
 export default function RootLayout({
