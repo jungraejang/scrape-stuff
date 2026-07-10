@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
-import { LayoutGrid, List, Scroll, Search, X } from "lucide-react";
+import { LayoutGrid, List, Search, X } from "lucide-react";
 import type { Listing } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -457,7 +457,7 @@ export default function ListingsGrid({
       <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="flex items-center gap-2.5 text-2xl font-bold tracking-tight sm:text-3xl theme8bit:uppercase theme8bit:tracking-widest theme8bit:text-[#f4d35e] theme8bit:text-lg sm:theme8bit:text-xl theme8bit:[font-family:var(--font-pixel)]">
-            <Scroll className="h-7 w-7 shrink-0 text-muted-foreground sm:h-8 sm:w-8" />
+            <SiteLogo className="h-7 w-7 shrink-0 sm:h-8 sm:w-8 theme8bit:rounded-none" />
             JR&apos;s List (Beta)
           </h1>
           <p className="mt-1 text-sm text-muted-foreground theme8bit:[font-family:var(--font-pixel)] theme8bit:leading-relaxed">
@@ -703,6 +703,21 @@ export default function ListingsGrid({
         className="mt-8"
       />
     </div>
+  );
+}
+
+/** Same artwork as src/app/icon.svg (the favicon), inlined so it scales crisply. */
+function SiteLogo({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 32 32" aria-hidden="true" className={className}>
+      <rect width="32" height="32" rx="6" fill="#18181b" />
+      <rect x="6" y="7" width="4" height="4" fill="#f59e0b" />
+      <rect x="13" y="7" width="13" height="4" rx="1" fill="#fafafa" />
+      <rect x="6" y="14" width="4" height="4" fill="#f59e0b" />
+      <rect x="13" y="14" width="13" height="4" rx="1" fill="#fafafa" />
+      <rect x="6" y="21" width="4" height="4" fill="#f59e0b" />
+      <rect x="13" y="21" width="13" height="4" rx="1" fill="#fafafa" />
+    </svg>
   );
 }
 
