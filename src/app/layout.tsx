@@ -22,12 +22,29 @@ const pressStart2P = Press_Start_2P({
   subsets: ["latin"],
 });
 
+// SITE_URL can be a comma-separated list (dev server, production) for the
+// scrapers' revalidation pings; the metadata base only needs one entry, so
+// prefer the last (production) URL.
+function getMetadataBase(): URL | undefined {
+  const urls = (process.env.SITE_URL ?? "")
+    .split(",")
+    .map((u) => u.trim())
+    .filter(Boolean);
+  const pick = urls[urls.length - 1];
+  if (!pick) return undefined;
+  try {
+    return new URL(pick);
+  } catch {
+    return undefined;
+  }
+}
+
 export const metadata: Metadata = {
   title: "JR's List",
   description: "Sub-3k rental listings in NYC",
   // Absolute URL base for the Open Graph / Twitter images (file convention
   // opengraph-image.tsx provides the image itself).
-  metadataBase: process.env.SITE_URL ? new URL(process.env.SITE_URL) : undefined,
+  metadataBase: getMetadataBase(),
   openGraph: {
     title: "JR's List",
     description: "NYC housing listings, mostly under $3,000.",

@@ -39,3 +39,22 @@ create policy "Public read access"
   for select
   to anon, authenticated
   using (true);
+
+-- Small key/value table for site-wide metadata. Scrapers stamp
+-- key='last_updated' after every successful run; the frontend reads it to
+-- show the "Last updated" timestamp. Idempotent: safe to re-run without
+-- touching existing data.
+create table if not exists public.site_meta (
+  key text primary key,
+  value text not null,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.site_meta enable row level security;
+
+drop policy if exists "Public read access" on public.site_meta;
+create policy "Public read access"
+  on public.site_meta
+  for select
+  to anon, authenticated
+  using (true);

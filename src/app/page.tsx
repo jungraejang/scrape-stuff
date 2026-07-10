@@ -75,8 +75,9 @@ async function getCachedListings(): Promise<Listing[]> {
 }
 
 /**
- * The newest scraped_at across all rows, i.e. when a scraper last refreshed
- * the data. Shares the "listings" tag so it updates with the listings cache.
+ * When a scraper last completed a run, read from the site_meta table that
+ * scrapers stamp explicitly (single-row lookup, no scan over listings).
+ * Shares the "listings" tag so it refreshes with the listings cache.
  * Returns null on error; the timestamp is decorative and should never block
  * the page.
  */
@@ -85,12 +86,12 @@ const getCachedLastUpdated = unstable_cache(
     const supabase = getSupabaseClient();
     if (!supabase) return null;
     const { data, error } = await supabase
-      .from("listings")
-      .select("scraped_at")
-      .order("scraped_at", { ascending: false })
-      .limit(1);
-    if (error || !data?.length) return null;
-    return data[0].scraped_at;
+      .from("site_meta")
+      .select("value")
+      .eq("key", "last_updated")
+      .maybeSingle();
+    if (error || !data) return null;
+    return data.value;
   },
   ["listings-last-updated"],
   { tags: ["listings"], revalidate: 3600 },

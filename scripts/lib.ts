@@ -102,33 +102,70 @@ export function getServiceClient(): SupabaseClient {
 }
 
 /**
- * Pings the site's revalidate endpoint so the cached listings page rebuilds
- * with fresh data right after a scrape. No-ops (with a warning) when SITE_URL
- * or REVALIDATE_SECRET are absent, so scraping keeps working without it.
+ * Stamps site_meta.last_updated with the current time so the frontend can
+ * show when data last changed, independent of any per-row scraped_at values.
+ * Non-fatal: a missing table (migration not run yet) only logs a warning.
+ */
+async function markSiteUpdated(): Promise<void> {
+  try {
+    const db = getServiceClient();
+    const { error } = await db.from("site_meta").upsert({
+      key: "last_updated",
+      value: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+    if (error) {
+      console.warn(
+        `Could not stamp last_updated: ${error.message}. ` +
+          "If the site_meta table is missing, run the site_meta section of supabase/schema.sql in the SQL editor.",
+      );
+      return;
+    }
+    console.log("Stamped site_meta.last_updated.");
+  } catch (err) {
+    console.warn(`Could not stamp last_updated: ${(err as Error).message}`);
+  }
+}
+
+/**
+ * Records the run in site_meta, then pings each site's revalidate endpoint so
+ * the cached listings page rebuilds with fresh data right after a scrape.
+ * SITE_URL may be a comma-separated list (e.g. local dev server and the
+ * production deployment). No-ops (with a warning) when SITE_URL or
+ * REVALIDATE_SECRET are absent, so scraping keeps working without it.
  */
 export async function revalidateListings(): Promise<void> {
-  const siteUrl = process.env.SITE_URL;
+  await markSiteUpdated();
+  const siteUrls = (process.env.SITE_URL ?? "")
+    .split(",")
+    .map((u) => u.trim())
+    .filter(Boolean);
   const secret = process.env.REVALIDATE_SECRET;
-  if (!siteUrl || !secret) {
+  if (siteUrls.length === 0 || !secret) {
     console.warn(
       "Skipping revalidation: set SITE_URL and REVALIDATE_SECRET in .env.local to auto-refresh the site after scraping.",
     );
     return;
   }
-  try {
-    const res = await fetch(new URL("/api/revalidate", siteUrl), {
-      method: "POST",
-      headers: { "x-revalidate-secret": secret },
-    });
-    if (!res.ok) {
+  for (const siteUrl of siteUrls) {
+    try {
+      const res = await fetch(new URL("/api/revalidate", siteUrl), {
+        method: "POST",
+        headers: { "x-revalidate-secret": secret },
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!res.ok) {
+        console.warn(
+          `Revalidation failed for ${siteUrl}: ${res.status} ${res.statusText}`,
+        );
+        continue;
+      }
+      console.log(`Triggered revalidation for ${siteUrl}.`);
+    } catch (err) {
       console.warn(
-        `Revalidation request failed: ${res.status} ${res.statusText}`,
+        `Revalidation errored for ${siteUrl}: ${(err as Error).message}`,
       );
-      return;
     }
-    console.log("Triggered site revalidation.");
-  } catch (err) {
-    console.warn(`Revalidation request errored: ${(err as Error).message}`);
   }
 }
 
