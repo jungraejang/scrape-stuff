@@ -461,8 +461,10 @@ export default function ListingsGrid({
             JR&apos;s List (Beta)
           </h1>
           <p className="mt-1 text-sm text-muted-foreground theme8bit:[font-family:var(--font-pixel)] theme8bit:leading-relaxed">
-            {listings.length} NYC housing listings from HeyKorean, Zillow,
-            StreetEasy, Craigslist, Facebook Marketplace, and Reddit. Mostly{" "}
+            <span className="text-red-600 dark:text-red-400">
+              {listings.length}{" "}
+            </span>{" "}
+            NYC housing listings, mostly{" "}
             <span className="text-red-600 dark:text-red-400">under $3000.</span>
           </p>
           {lastUpdated && formatLastUpdated(lastUpdated) && (
