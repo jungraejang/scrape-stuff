@@ -91,6 +91,14 @@ const SOURCE_BRAND: Record<
       "border-[#FF4500] bg-[#FF4500] text-white hover:bg-[#FF4500]/90 dark:border-[#FF4500] dark:bg-[#FF4500]",
     badge: "border-transparent bg-[#FF4500] text-white",
   },
+  listingsproject: {
+    // Listings Project's brand teal.
+    label: "Listings Project",
+    chip: "border-[#0D8A8A]/45 text-[#0D8A8A] hover:bg-[#0D8A8A]/10 dark:border-[#0D8A8A]/55 dark:text-[#3FC1C1]",
+    chipActive:
+      "border-[#0D8A8A] bg-[#0D8A8A] text-white hover:bg-[#0D8A8A]/90 dark:border-[#0D8A8A] dark:bg-[#0D8A8A]",
+    badge: "border-transparent bg-[#0D8A8A] text-white",
+  },
 };
 
 const SOURCE_KEYS = Object.keys(SOURCE_BRAND) as Listing["source"][];
@@ -111,6 +119,15 @@ const BOROUGH_LABELS: Record<(typeof BOROUGH_KEYS)[number], string> = {
   "staten island": "Staten Island",
 };
 
+const LISTING_TYPE_KEYS = ["apartment", "room", "sublet"] as const;
+
+const LISTING_TYPE_LABELS: Record<(typeof LISTING_TYPE_KEYS)[number], string> =
+  {
+    apartment: "Apartments",
+    room: "Rooms",
+    sublet: "Sublets",
+  };
+
 const PRICE_SLIDER_MIN = 0;
 const PRICE_SLIDER_MAX = 3000;
 const PRICE_SLIDER_STEP = 50;
@@ -129,6 +146,7 @@ type SavedFilters = {
   /** Empty array = no filter (show all). */
   sources: string[];
   boroughs: string[];
+  listingTypes: string[];
   categories: string[];
   sort: SortKey;
   priceRange: [number, number];
@@ -139,6 +157,7 @@ type SavedFilters = {
 const DEFAULT_FILTERS: SavedFilters = {
   sources: [],
   boroughs: [],
+  listingTypes: [],
   categories: [],
   sort: "newest",
   priceRange: DEFAULT_PRICE_RANGE,
@@ -208,6 +227,9 @@ function readSavedFilters(): SavedFilters {
       ),
       boroughs: readSelection(parsed.boroughs, parsed.borough).filter((v) =>
         BOROUGH_KEYS.includes(v as (typeof BOROUGH_KEYS)[number]),
+      ),
+      listingTypes: readSelection(parsed.listingTypes, undefined).filter((v) =>
+        LISTING_TYPE_KEYS.includes(v as (typeof LISTING_TYPE_KEYS)[number]),
       ),
       categories: readSelection(parsed.categories, parsed.category),
       sort:
@@ -301,6 +323,7 @@ export default function ListingsGrid({
   const {
     sources,
     boroughs: selectedBoroughs,
+    listingTypes: selectedListingTypes,
     categories: selectedCategories,
     sort,
     priceRange,
@@ -321,6 +344,17 @@ export default function ListingsGrid({
   };
   const clearBoroughs = () => {
     setFilters((f) => ({ ...f, boroughs: [] }));
+    setPage(1);
+  };
+  const toggleListingType = (value: string) => {
+    setFilters((f) => ({
+      ...f,
+      listingTypes: toggleValue(f.listingTypes, value),
+    }));
+    setPage(1);
+  };
+  const clearListingTypes = () => {
+    setFilters((f) => ({ ...f, listingTypes: [] }));
     setPage(1);
   };
   const toggleCategory = (value: string) => {
@@ -367,13 +401,15 @@ export default function ListingsGrid({
     );
   }, [bySearch, priceRange]);
 
-  const boroughs = useMemo(() => {
+  // Rows scraped before the listing_type column existed count as apartments,
+  // the overwhelmingly common case, until a scrape or backfill labels them.
+  const listingTypes = useMemo(() => {
     const counts = new Map<string, number>();
     for (const l of byPrice) {
-      if (!l.borough) continue;
-      counts.set(l.borough, (counts.get(l.borough) ?? 0) + 1);
+      const type = l.listing_type ?? "apartment";
+      counts.set(type, (counts.get(type) ?? 0) + 1);
     }
-    return BOROUGH_KEYS.map(
+    return LISTING_TYPE_KEYS.map(
       (key) => [key, counts.get(key) ?? 0] as const,
     ).filter(([, count]) => count > 0);
   }, [byPrice]);
@@ -382,16 +418,40 @@ export default function ListingsGrid({
   // borough with zero listings in the price range) are ignored, not deleted:
   // the raw selection stays in state/localStorage and re-applies when the
   // option comes back.
+  const activeListingTypes = useMemo(() => {
+    const available = new Set<string>(listingTypes.map(([key]) => key));
+    return selectedListingTypes.filter((t) => available.has(t));
+  }, [selectedListingTypes, listingTypes]);
+
+  const byListingType = useMemo(() => {
+    if (activeListingTypes.length === 0) return byPrice;
+    const wanted = new Set(activeListingTypes);
+    return byPrice.filter((l) => wanted.has(l.listing_type ?? "apartment"));
+  }, [byPrice, activeListingTypes]);
+
+  const boroughs = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const l of byListingType) {
+      if (!l.borough) continue;
+      counts.set(l.borough, (counts.get(l.borough) ?? 0) + 1);
+    }
+    return BOROUGH_KEYS.map(
+      (key) => [key, counts.get(key) ?? 0] as const,
+    ).filter(([, count]) => count > 0);
+  }, [byListingType]);
+
   const activeBoroughs = useMemo(() => {
     const available = new Set<string>(boroughs.map(([key]) => key));
     return selectedBoroughs.filter((b) => available.has(b));
   }, [selectedBoroughs, boroughs]);
 
   const byBorough = useMemo(() => {
-    if (activeBoroughs.length === 0) return byPrice;
+    if (activeBoroughs.length === 0) return byListingType;
     const wanted = new Set(activeBoroughs);
-    return byPrice.filter((l) => l.borough != null && wanted.has(l.borough));
-  }, [byPrice, activeBoroughs]);
+    return byListingType.filter(
+      (l) => l.borough != null && wanted.has(l.borough),
+    );
+  }, [byListingType, activeBoroughs]);
 
   const bySource = useMemo(() => {
     if (sources.length === 0) return byBorough;
@@ -571,7 +631,23 @@ export default function ListingsGrid({
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <FilterChip
-          label={`All locations (${byPrice.length})`}
+          label={`All listings (${byPrice.length})`}
+          active={activeListingTypes.length === 0}
+          onClick={clearListingTypes}
+        />
+        {listingTypes.map(([key, count]) => (
+          <FilterChip
+            key={key}
+            label={`${LISTING_TYPE_LABELS[key]} (${count})`}
+            active={activeListingTypes.includes(key)}
+            onClick={() => toggleListingType(key)}
+          />
+        ))}
+      </div>
+
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <FilterChip
+          label={`All locations (${byListingType.length})`}
           active={activeBoroughs.length === 0}
           onClick={clearBoroughs}
         />
@@ -931,6 +1007,35 @@ function isComingSoon(write_dt: string | null): boolean {
   return new Date(write_dt).getTime() > Date.now();
 }
 
+/**
+ * Room/sublet marker. Whole-unit rentals (the default) get no badge, and the
+ * badge is skipped when the category badge already carries the same word.
+ */
+function ListingTypeBadge({
+  listing,
+  className,
+}: {
+  listing: Listing;
+  className?: string;
+}) {
+  const type = listing.listing_type;
+  if (type !== "room" && type !== "sublet") return null;
+  if (type === "room" && listing.category === "Room") return null;
+  if (type === "sublet" && listing.category === "Sublet") return null;
+  return (
+    <Badge
+      className={cn(
+        "border-transparent font-medium text-white",
+        type === "room" ? "bg-teal-600" : "bg-violet-600",
+        "theme8bit:border-2 theme8bit:border-black theme8bit:shadow-[2px_2px_0_#000]",
+        className,
+      )}
+    >
+      {type === "room" ? "Room" : "Sublet"}
+    </Badge>
+  );
+}
+
 function ComingSoonBadge({ className }: { className?: string }) {
   return (
     <Badge
@@ -1011,11 +1116,14 @@ function ListingCard({ listing }: { listing: Listing }) {
             sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
             className="object-cover transition-transform duration-300 group-hover:scale-105"
           />
-          {listing.category && (
-            <Badge className="absolute left-3 top-3 border-transparent bg-black/70 text-white backdrop-blur theme8bit:border-2 theme8bit:border-black theme8bit:bg-black theme8bit:backdrop-blur-none">
-              {listing.category}
-            </Badge>
-          )}
+          <div className="absolute left-3 top-3 flex flex-wrap gap-1.5">
+            {listing.category && (
+              <Badge className="border-transparent bg-black/70 text-white backdrop-blur theme8bit:border-2 theme8bit:border-black theme8bit:bg-black theme8bit:backdrop-blur-none">
+                {listing.category}
+              </Badge>
+            )}
+            <ListingTypeBadge listing={listing} />
+          </div>
           <SourceBadge
             source={listing.source}
             className="absolute right-3 top-3 theme8bit:backdrop-blur-none"
@@ -1101,6 +1209,7 @@ function ListingRow({ listing }: { listing: Listing }) {
           {listing.category && (
             <Badge variant="outline">{listing.category}</Badge>
           )}
+          <ListingTypeBadge listing={listing} />
           {isComingSoon(listing.write_dt) && <ComingSoonBadge />}
           {posted && (
             <span className="text-xs text-muted-foreground">{posted}</span>
@@ -1111,11 +1220,15 @@ function ListingRow({ listing }: { listing: Listing }) {
         <SourceBadge source={listing.source} />
       </TableCell>
       <TableCell className="hidden sm:table-cell">
-        {listing.category ? (
-          <Badge variant="outline">{listing.category}</Badge>
-        ) : (
-          <span className="text-muted-foreground">—</span>
-        )}
+        <div className="flex flex-wrap gap-1">
+          {listing.category ? (
+            <Badge variant="outline">{listing.category}</Badge>
+          ) : listing.listing_type == null ||
+            listing.listing_type === "apartment" ? (
+            <span className="text-muted-foreground">—</span>
+          ) : null}
+          <ListingTypeBadge listing={listing} />
+        </div>
       </TableCell>
       <TableCell className="hidden text-muted-foreground sm:table-cell">
         <div className="flex items-center gap-2">

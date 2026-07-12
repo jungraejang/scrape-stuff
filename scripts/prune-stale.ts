@@ -10,6 +10,8 @@
  *     off-market rows are pruned by its scraper (pruneUnseen).
  *   - facebook: write_dt is always null (cards expose no posting date);
  *     delisted rows are pruned by its scraper (pruneUnseen).
+ *   - listingsproject: write_dt is the sublet's start date (often in the
+ *     future); expired rows are pruned by its scraper (pruneUnseen).
  *
  * Run: npm run prune
  */

@@ -36,6 +36,20 @@ const nextConfig: NextConfig = {
         protocol: "https",
         hostname: "**.fbcdn.net",
       },
+      {
+        // Reddit post images (i.redd.it, preview.redd.it, external-preview.redd.it)
+        protocol: "https",
+        hostname: "*.redd.it",
+      },
+      {
+        protocol: "https",
+        hostname: "i.imgur.com",
+      },
+      {
+        // Listings Project photos (Bunny CDN)
+        protocol: "https",
+        hostname: "listing-photos.b-cdn.net",
+      },
     ],
   },
 };

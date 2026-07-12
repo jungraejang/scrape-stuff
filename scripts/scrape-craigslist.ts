@@ -31,31 +31,72 @@ import {
   upsertRows,
   type ListingRow,
 } from "./lib";
+import type { ListingType } from "./listing-type";
 
 const API_BASE = "https://sapi.craigslist.org/web/v8/postings/search/full";
 // batch format: {areaId}-{?}-{maxResults}-{?}-{?}; area 3 = the New York area
 const BATCH = "3-0-360-0-0";
-const CATEGORY = "apa"; // apartments / housing for rent
 const MAX_RESULTS_PER_SEARCH = 360;
 const MAX_PRICE = 3000; // matches the search filter; scam posts sneak above it
-// One search per price band to stay under the 360-results-per-search cap.
-// Bands narrow as prices rise because inventory is denser there.
-const PRICE_BANDS: Array<[number, number]> = [
-  [0, 1200],
-  [1201, 1600],
-  [1601, 1900],
-  [1901, 2100],
-  [2101, 2300],
-  [2301, 2450],
-  [2451, 2600],
-  [2601, 2750],
-  [2751, 2850],
-  [2851, 2950],
-  [2951, 2999],
-  [3000, 3000],
-];
 const PAGE_DELAY_MS = 1000;
 const DRY_RUN = process.argv.includes("--dry-run");
+
+interface Section {
+  cat: string;
+  label: string;
+  /** null = derive from text (apartments hide sublets among them). */
+  listingType: ListingType | null;
+  /**
+   * One search per price band to stay under the 360-results-per-search cap.
+   * Bands narrow where inventory is denser.
+   */
+  priceBands: Array<[number, number]>;
+}
+
+const SECTIONS: Section[] = [
+  {
+    cat: "apa", // apartments / housing for rent
+    label: "apartments",
+    listingType: null,
+    priceBands: [
+      [0, 1200],
+      [1201, 1600],
+      [1601, 1900],
+      [1901, 2100],
+      [2101, 2300],
+      [2301, 2450],
+      [2451, 2600],
+      [2601, 2750],
+      [2751, 2850],
+      [2851, 2950],
+      [2951, 2999],
+      [3000, 3000],
+    ],
+  },
+  {
+    cat: "roo", // rooms & shares
+    label: "rooms",
+    listingType: "room",
+    priceBands: [
+      [0, 700],
+      [701, 900],
+      [901, 1050],
+      [1051, 1200],
+      [1201, 1500],
+      [1501, 3000],
+    ],
+  },
+  {
+    cat: "sub", // sublets & temporary
+    label: "sublets",
+    listingType: "sublet",
+    priceBands: [
+      [0, 1500],
+      [1501, 2200],
+      [2201, 3000],
+    ],
+  },
+];
 
 type Item = Array<number | string | Array<number | string>>;
 
@@ -73,7 +114,12 @@ function tagged(item: Item, tag: number): Array<number | string> | undefined {
   return item.find((e): e is Array<number | string> => Array.isArray(e) && e[0] === tag);
 }
 
-function decodeItem(item: Item, decode: SapiData["decode"], scrapedAt: string): ListingRow | null {
+function decodeItem(
+  item: Item,
+  decode: SapiData["decode"],
+  section: Section,
+  scrapedAt: string,
+): ListingRow | null {
   const idOffset = item[0];
   const dateOffset = item[1];
   const price = item[3];
@@ -112,7 +158,7 @@ function decodeItem(item: Item, decode: SapiData["decode"], scrapedAt: string): 
   const url =
     slug && token
       ? `https://www.craigslist.org/view/d/${slug}/${token}`
-      : `https://www.craigslist.org/search/area/newyork?cat=${CATEGORY}`;
+      : `https://www.craigslist.org/search/area/newyork?cat=${section.cat}`;
 
   return {
     source: "craigslist",
@@ -120,7 +166,13 @@ function decodeItem(item: Item, decode: SapiData["decode"], scrapedAt: string): 
     title,
     address: neighborhood,
     price: typeof price === "number" && price > 0 ? price : null,
-    category: null,
+    category:
+      section.listingType === "room"
+        ? "Room"
+        : section.listingType === "sublet"
+          ? "Sublet"
+          : null,
+    listing_type: section.listingType,
     beds: null,
     bath: null,
     size_sqft: null,
@@ -133,13 +185,13 @@ function decodeItem(item: Item, decode: SapiData["decode"], scrapedAt: string): 
   };
 }
 
-async function fetchBand(minPrice: number, maxPrice: number): Promise<SapiData> {
+async function fetchBand(cat: string, minPrice: number, maxPrice: number): Promise<SapiData> {
   const params = new URLSearchParams({
     batch: BATCH,
-    cat: CATEGORY,
+    cat,
     cc: "US",
     lang: "en",
-    searchPath: CATEGORY,
+    searchPath: cat,
     min_price: String(minPrice),
     max_price: String(maxPrice),
   });
@@ -167,44 +219,53 @@ async function fetchBand(minPrice: number, maxPrice: number): Promise<SapiData> 
 async function main() {
   const cutoff = getCutoff();
   const scrapedAt = new Date().toISOString();
-  console.log("Scraping Craigslist NY apartments (max $3,000/mo)");
+  console.log("Scraping Craigslist NY apartments, rooms & sublets (max $3,000/mo)");
   if (DRY_RUN) console.log("DRY RUN: no database writes will be made.\n");
 
   const rowsById = new Map<string, ListingRow>();
 
-  for (const [min, max] of PRICE_BANDS) {
-    const data = await fetchBand(min, max);
-    if (data.totalResultCount > MAX_RESULTS_PER_SEARCH) {
-      console.warn(
-        `WARNING: price band ${min}-${max} has ${data.totalResultCount} results but only ${MAX_RESULTS_PER_SEARCH} can be fetched. Split PRICE_BANDS further to get them all.`
+  for (const section of SECTIONS) {
+    console.log(`\n--- Section: ${section.label} (${section.cat}) ---`);
+    for (const [min, max] of section.priceBands) {
+      const data = await fetchBand(section.cat, min, max);
+      if (data.totalResultCount > MAX_RESULTS_PER_SEARCH) {
+        console.warn(
+          `WARNING: ${section.label} band ${min}-${max} has ${data.totalResultCount} results but only ${MAX_RESULTS_PER_SEARCH} can be fetched. Split its priceBands further to get them all.`
+        );
+      }
+      let kept = 0;
+      let junk = 0;
+      for (const item of data.items) {
+        const row = decodeItem(item, data.decode, section, scrapedAt);
+        if (!row) continue;
+        if (row.write_dt && new Date(row.write_dt) < cutoff) continue;
+
+        // Scam posts hide the real price in the title ("$1,85o") and set the
+        // price field to $1; recover the real price when possible.
+        if (row.price != null && row.price < MIN_MONTHLY_PRICE) {
+          row.price = recoverPriceFromTitle(row.title);
+        }
+        // Drop placeholder prices, nightly/weekly rates, and recovered prices
+        // that exceed the search's own max (scam posts dodging the filter).
+        if (row.price == null || row.price < MIN_MONTHLY_PRICE || row.price > MAX_PRICE) {
+          junk++;
+          continue;
+        }
+
+        // A post can appear in multiple sections (cross-posted); the more
+        // specific room/sublet label wins over the apartments section's.
+        const existing = rowsById.get(row.ext_id);
+        if (existing && existing.listing_type != null && row.listing_type == null) {
+          continue;
+        }
+        rowsById.set(row.ext_id, row);
+        kept++;
+      }
+      console.log(
+        `Price $${min}-$${max}: ${data.items.length} items, ${kept} kept, ${junk} junk dropped (total: ${rowsById.size})`
       );
+      await sleep(PAGE_DELAY_MS);
     }
-    let kept = 0;
-    let junk = 0;
-    for (const item of data.items) {
-      const row = decodeItem(item, data.decode, scrapedAt);
-      if (!row) continue;
-      if (row.write_dt && new Date(row.write_dt) < cutoff) continue;
-
-      // Scam posts hide the real price in the title ("$1,85o") and set the
-      // price field to $1; recover the real price when possible.
-      if (row.price != null && row.price < MIN_MONTHLY_PRICE) {
-        row.price = recoverPriceFromTitle(row.title);
-      }
-      // Drop placeholder prices, nightly/weekly rates, and recovered prices
-      // that exceed the search's own max (scam posts dodging the filter).
-      if (row.price == null || row.price < MIN_MONTHLY_PRICE || row.price > MAX_PRICE) {
-        junk++;
-        continue;
-      }
-
-      rowsById.set(row.ext_id, row);
-      kept++;
-    }
-    console.log(
-      `Price $${min}-$${max}: ${data.items.length} items, ${kept} kept, ${junk} junk dropped (total: ${rowsById.size})`
-    );
-    await sleep(PAGE_DELAY_MS);
   }
 
   const rows = dedupeByTitlePrice([...rowsById.values()]);

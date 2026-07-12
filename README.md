@@ -5,7 +5,7 @@ Scrapes housing rental listings from [HeyKorean](https://rent.heykorean.com), [Z
 - **HeyKorean**: NY area, max $3,000/mo (categories: room share, 1BR, etc.), last 2 months
 - **Zillow**: Queens / Brooklyn / Bronx regions, 2+ beds, max $3,000/mo, last 2 months
 - **StreetEasy**: Manhattan / Brooklyn / Queens / Bronx, max $3,000/mo, all currently active listings
-- **Craigslist**: New York area, apartments/housing, max $3,000/mo, all currently active posts
+- **Craigslist**: New York area, three sections — apartments/housing (`apa`), rooms & shares (`roo`), sublets & temporary (`sub`) — max $3,000/mo, all currently active posts
 - **Facebook Marketplace**: NYC property rentals, max $3,000/mo (requires a one-time Facebook login; see below)
 
 ## How it works
@@ -13,9 +13,9 @@ Scrapes housing rental listings from [HeyKorean](https://rent.heykorean.com), [Z
 1. `npm run scrape` pulls HeyKorean listings from their JSON API.
 2. `npm run scrape:zillow` pulls Zillow listings by reading the `__NEXT_DATA__` JSON embedded in the search result pages (Zillow's real API is bot-protected, but the pages themselves are not). It searches region by region because Zillow caps any single search at 20 pages.
 3. `npm run scrape:streeteasy` pulls StreetEasy listings from their GraphQL API (api-v6.streeteasy.com), which accepts cookie-less requests. StreetEasy only returns currently active listings, so instead of an age cutoff, listings are removed when they go off market. The date shown is the listing's availability date.
-4. `npm run scrape:craigslist` pulls Craigslist posts from their search API (sapi.craigslist.org), which also accepts cookie-less requests but returns a compact encoded format that the scraper decodes. A single search returns at most 360 results, so it searches one price band at a time and merges. Posts expire after ~30-45 days, so removed/expired posts are pruned when they stop appearing.
+4. `npm run scrape:craigslist` pulls Craigslist posts from their search API (sapi.craigslist.org), which also accepts cookie-less requests but returns a compact encoded format that the scraper decodes. It searches three sections (apartments, rooms & shares, sublets & temporary); a single search returns at most 360 results, so each section is searched one price band at a time and merged. Posts expire after ~30-45 days, so removed/expired posts are pruned when they stop appearing.
 5. `npm run scrape:facebook` drives a real Chromium browser with Playwright (Facebook blocks plain HTTP clients entirely), loads the Marketplace rentals search, scrolls to load results, and extracts the listing cards from the page. Requires running `npm run fb:login` once first.
-6. All five upsert into the shared `listings` table keyed on `(source, ext_id)` — re-running refreshes data without duplicates — and prune their own stale rows.
+6. All five upsert into the shared `listings` table keyed on `(source, ext_id)` — re-running refreshes data without duplicates — and prune their own stale rows. Every row gets a `listing_type` (`apartment` / `room` / `sublet`), either from the source section it was scraped from (Craigslist rooms/sublets, Reddit flair) or derived from the listing text (`scripts/listing-type.ts`). `scripts/backfill-listing-type.ts` labels rows scraped before the column existed.
 7. The Next.js frontend reads from Supabase and shows a card grid with source filters, category filters, a $2,000 price-cap toggle, and price/date sorting. Each card links to the original listing.
 
 ## Setup

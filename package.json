@@ -15,6 +15,7 @@
     "scrape:craigslist": "node --use-system-ca --import tsx scripts/scrape-craigslist.ts",
     "scrape:facebook": "node --use-system-ca --import tsx scripts/scrape-facebook.ts",
     "scrape:reddit": "node --use-system-ca --import tsx scripts/scrape-reddit.ts",
+    "scrape:listingsproject": "node --use-system-ca --import tsx scripts/scrape-listingsproject.ts",
     "fb:login": "node --use-system-ca --import tsx scripts/fb-login.ts"
   },
   "dependencies": {

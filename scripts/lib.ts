@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { config } from "dotenv";
 import { detectBorough, type Borough } from "./borough";
+import { detectListingType, type ListingType } from "./listing-type";
 
 config({ path: ".env.local" });
 
@@ -12,7 +13,8 @@ export interface ListingRow {
     | "streeteasy"
     | "craigslist"
     | "facebook"
-    | "reddit";
+    | "reddit"
+    | "listingsproject";
   ext_id: string;
   title: string | null;
   address: string | null;
@@ -29,6 +31,11 @@ export interface ListingRow {
   scraped_at: string;
   /** Derived by upsertRows; null = outside NYC or undetectable. */
   borough?: Borough | null;
+  /**
+   * apartment | room | sublet. Scrapers that know it from the source section
+   * set it explicitly; otherwise upsertRows derives it from the text.
+   */
+  listing_type?: ListingType | null;
 }
 
 export const BROWSER_HEADERS = {
@@ -175,6 +182,7 @@ export async function upsertRows(
 ): Promise<number> {
   for (const row of rows) {
     row.borough ??= detectBorough(row);
+    row.listing_type ??= detectListingType(row);
   }
   const BATCH_SIZE = 500;
   let upserted = 0;

@@ -13,7 +13,8 @@ create table public.listings (
   address text,
   borough text,                   -- manhattan/brooklyn/queens/bronx/staten island, null = outside NYC or unknown
   price int,
-  category text,                  -- Studio / 1BR / 2BR / ...
+  category text,                  -- Studio / 1BR / 2BR / ... (unit size)
+  listing_type text,              -- apartment | room | sublet
   beds numeric,
   bath numeric,
   size_sqft int,
@@ -29,6 +30,10 @@ create table public.listings (
 create index listings_write_dt_idx on public.listings (write_dt desc nulls last);
 create index listings_source_idx on public.listings (source);
 create index listings_borough_idx on public.listings (borough);
+
+-- Migration for existing databases created before listing_type existed
+-- (idempotent; harmless right after the create table above):
+alter table public.listings add column if not exists listing_type text;
 
 -- Row Level Security: anyone can read (frontend uses the anon key),
 -- but only the service role key (used by the scrapers) can write.

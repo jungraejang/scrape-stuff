@@ -1,20 +1,27 @@
 /**
- * Reddit r/NYCapartments scraper (RSS, no API key).
+ * Reddit r/NYCapartments scraper (Playwright, no API key).
  *
- * Reddit's JSON endpoints return 403 for scripts, but the Atom feeds are
- * open with a plain user-agent. The feed returns up to 100 recent posts,
- * which comfortably covers the subreddit's daily volume, so a nightly run
- * accumulates listings over time.
+ * Reddit blocks plain HTTP clients by TLS fingerprint (Node fetch gets
+ * 403/429 even with a browser user-agent), so this scraper drives a real
+ * Chromium browser and calls Reddit's undocumented JSON endpoint
+ * (/r/<sub>/new.json) from inside the page context, where requests carry a
+ * genuine browser fingerprint and session cookies. The JSON API also returns
+ * more than the RSS feed did: post flair (used to classify listings),
+ * preview images, and pagination beyond 100 posts.
  *
  * Posts are unstructured text: actual listings are mixed with advice and
- * roommate-search threads. Only posts with an extractable dollar price are
- * kept (the signature of a real listing). Since the feed only shows recent
- * posts, rows are pruned by age (prune-stale.ts), not by absence.
+ * roommate-search threads. Flair decides when it is clear; otherwise only
+ * posts with an extractable dollar price are kept (the signature of a real
+ * listing). Since the feed only shows recent posts, rows are pruned by age
+ * (prune-stale.ts), not by absence.
  *
  * Run with: npm run scrape:reddit
  * Dry run (no database writes): npm run scrape:reddit -- --dry-run
+ * Debug visually: npm run scrape:reddit -- --headed
  */
+import { chromium, type Page } from "playwright";
 import { detectBorough } from "./borough";
+import { detectListingType, type ListingType } from "./listing-type";
 import {
   getCutoff,
   getServiceClient,
@@ -26,63 +33,68 @@ import {
   type ListingRow,
 } from "./lib";
 
-const FEED_URLS = [
-  "https://www.reddit.com/r/NYCapartments/new/.rss?limit=100",
-];
-const USER_AGENT = "nyc-rental-aggregator/1.0 (personal aggregator)";
+const SUBREDDIT = "NYCapartments";
+const BASE_URL = `https://www.reddit.com/r/${SUBREDDIT}/new/`;
 const MAX_PRICE = 3000; // align with the other scrapers' search caps
+const MAX_PAGES = Number(process.env.SCRAPE_REDDIT_PAGES ?? 4); // 100 posts/page
+const PAGE_DELAY_MS = 2500;
+const FETCH_RETRIES = 3;
 const DRY_RUN = process.argv.includes("--dry-run");
+const HEADED = process.argv.includes("--headed");
 
-interface FeedEntry {
-  id: string;
+interface RedditPost {
+  id: string; // fullname, e.g. "t3_1ur2238" (matches the old RSS ext_id)
   title: string;
-  link: string;
-  published: string;
+  permalink: string;
+  createdUtc: number;
   author: string | null;
+  flair: string | null;
   text: string;
+  picture: string | null;
 }
 
-function decodeEntities(s: string): string {
-  return s
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#0?39;/g, "'")
-    .replace(/&#32;/g, " ")
-    .replace(/&amp;/g, "&");
-}
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
-function stripHtml(s: string): string {
-  return decodeEntities(s).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-}
-
-function tag(entry: string, name: string): string | null {
-  const m = entry.match(new RegExp(`<${name}[^>]*>([\\s\\S]*?)</${name}>`));
-  return m ? m[1] : null;
-}
-
-function parseFeed(xml: string): FeedEntry[] {
-  const entries: FeedEntry[] = [];
-  for (const m of xml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)) {
-    const entry = m[1];
-    const id = tag(entry, "id");
-    const title = tag(entry, "title");
-    const published = tag(entry, "published");
-    const link = entry.match(/<link href="([^"]+)"/)?.[1];
-    if (!id || !title || !published || !link) continue;
-    entries.push({
-      id,
-      title: decodeEntities(title),
-      link,
-      published,
-      author: tag(entry, "name")?.replace(/^\/u\//, "") ?? null,
-      // The content block is HTML-escaped HTML; flatten to plain text so
-      // price/borough regexes can see through markup.
-      text: stripHtml(tag(entry, "content") ?? ""),
-    });
+/** First usable image URL from a post's JSON (preview or direct link). */
+function extractPicture(d: any): string | null {
+  // preview.images[].source.url is HTML-escaped (&amp;).
+  const preview = d?.preview?.images?.[0]?.source?.url;
+  if (typeof preview === "string") return preview.replace(/&amp;/g, "&");
+  // Gallery posts expose media_metadata keyed by image id.
+  const meta = d?.media_metadata;
+  if (meta && typeof meta === "object") {
+    for (const item of Object.values<any>(meta)) {
+      const mime: string | undefined = item?.m;
+      if (item?.id && typeof mime === "string" && mime.startsWith("image/")) {
+        return `https://i.redd.it/${item.id}.${mime.split("/")[1]}`;
+      }
+    }
   }
-  return entries;
+  // Direct image links (i.redd.it, imgur, ...).
+  const dest = d?.url_overridden_by_dest;
+  if (typeof dest === "string" && /\.(jpe?g|png|webp|gif)(\?|$)/i.test(dest)) {
+    return dest;
+  }
+  return null;
 }
+
+function toPost(d: any): RedditPost | null {
+  if (!d?.name || !d?.title || !d?.permalink || !d?.created_utc) return null;
+  return {
+    id: d.name,
+    title: String(d.title),
+    permalink: String(d.permalink),
+    createdUtc: Number(d.created_utc),
+    author: d.author ? String(d.author) : null,
+    flair: d.link_flair_text ? String(d.link_flair_text) : null,
+    text: String(d.selftext ?? "")
+      .replace(/\s+/g, " ")
+      .trim(),
+    picture: extractPicture(d),
+  };
+}
+
+/* eslint-enable @typescript-eslint/no-explicit-any */
 
 /**
  * Monthly rent from text. Requires an explicit $ amount; bare numbers are
@@ -104,20 +116,21 @@ function priceFrom(text: string): number | null {
  * the body is weaker (scam discussions and advice threads quote rents too),
  * so it additionally needs listing context: a unit type or a location.
  */
-function extractPrice(entry: FeedEntry): number | null {
-  const titlePrice = priceFrom(entry.title);
+function extractPrice(post: RedditPost, flairIsListing: boolean): number | null {
+  const titlePrice = priceFrom(post.title);
   if (titlePrice != null) return titlePrice;
 
-  const bodyPrice = priceFrom(entry.text);
+  const bodyPrice = priceFrom(post.text);
   if (bodyPrice == null) return null;
   const hasContext =
-    extractCategory(entry) != null ||
-    detectBorough({ title: entry.title, address: entry.text }) != null;
+    flairIsListing ||
+    extractCategory(post) != null ||
+    detectBorough({ title: post.title, address: post.text }) != null;
   return hasContext ? bodyPrice : null;
 }
 
-function extractCategory(entry: FeedEntry): string | null {
-  const text = `${entry.title} ${entry.text}`;
+function extractCategory(post: RedditPost): string | null {
+  const text = `${post.title} ${post.text}`;
   if (/\bstudio\b/i.test(text)) return "Studio";
   // (?<![\d.]) keeps "1.5 bedroom" from reading as "5BR".
   const beds = text.match(/(?<![\d.])(\d)\s*(?:br|bd|bed(?:room)?s?)\b/i);
@@ -127,80 +140,175 @@ function extractCategory(entry: FeedEntry): string | null {
 }
 
 /** Posts by people searching for housing rather than offering it. */
-function isSeekerPost(entry: FeedEntry): boolean {
+function isSeekerPost(post: RedditPost): boolean {
   return /\b(?:looking for|looking to|searching|in search of|iso|apartment hunt(?:ing)?|any takers|seeking|wanted|need a|recommendations?)\b/i.test(
-    entry.title,
+    post.title,
   );
 }
 
-function toRow(entry: FeedEntry, price: number, scrapedAt: string): ListingRow {
-  const category = extractCategory(entry);
+/**
+ * Flair supplements the text heuristics: a non-listing flair rejects the
+ * post outright, and a listing-type flair counts as listing context for
+ * posts whose price only appears in the body. It never overrides the
+ * seeker-post check ("ISO ..." posts get listing flairs too).
+ */
+function flairVerdict(flair: string | null): "listing" | "reject" | "unknown" {
+  if (!flair) return "unknown";
+  const f = flair.toLowerCase();
+  if (/advice|question|discussion|rant|vent|meme|news|scam|looking|request|wanted|iso/.test(f)) {
+    return "reject";
+  }
+  if (/listing|for rent|sublet|lease|no fee|apartment/.test(f)) return "listing";
+  return "unknown";
+}
+
+/**
+ * Flair labels the type directly when it names one; otherwise the shared
+ * text classifier decides from title + body.
+ */
+function extractListingType(post: RedditPost): ListingType {
+  const flair = post.flair?.toLowerCase() ?? "";
+  if (/room|share/.test(flair)) return "room";
+  if (/sublet|sublease|short.?term|temporary/.test(flair)) return "sublet";
+  if (/apartment|listing|for rent|lease|no fee/.test(flair)) return "apartment";
+  return detectListingType({
+    title: post.title,
+    text: post.text,
+    category: extractCategory(post),
+  });
+}
+
+function toRow(post: RedditPost, price: number, scrapedAt: string): ListingRow {
+  const category = extractCategory(post);
   return {
     source: "reddit",
-    ext_id: entry.id, // e.g. "t3_1ur2238"
-    title: entry.title,
+    ext_id: post.id,
+    title: post.title,
     address: null,
     price,
     category,
+    listing_type: extractListingType(post),
     beds: category?.endsWith("BR") ? Number(category[0]) : null,
     bath: null,
     size_sqft: null,
-    pictures: [],
+    pictures: post.picture ? [post.picture] : [],
     agent_name: null,
-    posted_by: entry.author,
-    write_dt: new Date(entry.published).toISOString(),
-    url: entry.link,
+    posted_by: post.author,
+    write_dt: new Date(post.createdUtc * 1000).toISOString(),
+    url: `https://www.reddit.com${post.permalink}`,
     scraped_at: scrapedAt,
   };
+}
+
+/**
+ * Fetches one page of /new.json from inside the browser (same-origin, real
+ * fingerprint). Retries transient 403/429 blocks with growing waits.
+ */
+async function fetchListingPage(
+  page: Page,
+  after: string | null,
+): Promise<{ posts: RedditPost[]; after: string | null }> {
+  const url =
+    `https://www.reddit.com/r/${SUBREDDIT}/new.json?limit=100&raw_json=1` +
+    (after ? `&after=${after}` : "");
+
+  for (let attempt = 0; ; attempt++) {
+    const result = await page.evaluate(async (u: string) => {
+      const res = await fetch(u, { headers: { accept: "application/json" } });
+      return {
+        status: res.status,
+        body: res.ok ? await res.json() : null,
+      };
+    }, url);
+
+    if (result.status === 200 && result.body) {
+      /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+      const children: any[] = result.body?.data?.children ?? [];
+      const posts = children
+        .filter((c) => c?.kind === "t3")
+        .map((c) => toPost(c.data))
+        .filter((p): p is RedditPost => p != null);
+      return { posts, after: result.body?.data?.after ?? null };
+    }
+
+    if (attempt >= FETCH_RETRIES) {
+      throw new Error(
+        `HTTP ${result.status} fetching ${url} (still blocked after ${FETCH_RETRIES} retries)`,
+      );
+    }
+    const waitMs = 15_000 * 2 ** attempt;
+    console.warn(
+      `  Blocked (${result.status}); waiting ${waitMs / 1000}s before retry ${attempt + 1}/${FETCH_RETRIES}...`,
+    );
+    await sleep(waitMs);
+  }
 }
 
 async function main() {
   const cutoff = getCutoff();
   const scrapedAt = new Date().toISOString();
-  console.log("Scraping r/NYCapartments via RSS");
+  console.log(`Scraping r/${SUBREDDIT} via Playwright (JSON endpoint)`);
   if (DRY_RUN) console.log("DRY RUN: no database writes will be made.\n");
+
+  const browser = await chromium.launch({ headless: !HEADED });
+  const context = await browser.newContext({
+    viewport: { width: 1440, height: 960 },
+    userAgent:
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+  });
+  const page = await context.newPage();
 
   const rowsById = new Map<string, ListingRow>();
   let seen = 0;
   let skippedNotListing = 0;
 
-  for (const url of FEED_URLS) {
-    let res: Response;
-    for (let attempt = 0; ; attempt++) {
-      res = await fetch(url, {
-        headers: { "user-agent": USER_AGENT },
-        signal: AbortSignal.timeout(30_000),
-      });
-      if (res.status !== 429) break;
-      if (attempt >= 3) throw new Error(`HTTP 429 fetching ${url} (still rate-limited after 3 backoffs)`);
-      const waitMs = 30_000 * 2 ** attempt;
-      console.warn(`  Rate limited (429); waiting ${waitMs / 1000}s before retry ${attempt + 1}/3...`);
-      await sleep(waitMs);
-    }
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status} fetching feed ${url}`);
-    }
-    const entries = parseFeed(await res.text());
-    seen += entries.length;
+  try {
+    // Land on the subreddit first so Reddit sets its cookies and any
+    // bot-check runs against a real page load, then reuse that session for
+    // the JSON calls.
+    await page.goto(BASE_URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    await page.waitForTimeout(3000);
 
-    for (const entry of entries) {
-      if (new Date(entry.published) < cutoff) continue;
-      if (isSeekerPost(entry)) {
-        skippedNotListing++;
-        continue;
+    let after: string | null = null;
+    for (let pageNum = 1; pageNum <= MAX_PAGES; pageNum++) {
+      const batch = await fetchListingPage(page, after);
+      seen += batch.posts.length;
+      let reachedCutoff = false;
+
+      for (const post of batch.posts) {
+        if (new Date(post.createdUtc * 1000) < cutoff) {
+          reachedCutoff = true;
+          continue;
+        }
+        const verdict = flairVerdict(post.flair);
+        if (verdict === "reject" || isSeekerPost(post)) {
+          skippedNotListing++;
+          continue;
+        }
+        const price = extractPrice(post, verdict === "listing");
+        if (price == null) {
+          skippedNotListing++;
+          continue; // advice threads, no-price posts
+        }
+        rowsById.set(post.id, toRow(post, price, scrapedAt));
       }
-      const price = extractPrice(entry);
-      if (price == null) {
-        skippedNotListing++;
-        continue; // advice threads, no-price posts
-      }
-      rowsById.set(entry.id, toRow(entry, price, scrapedAt));
+
+      console.log(
+        `Page ${pageNum}: ${batch.posts.length} posts (${rowsById.size} listings kept so far)`,
+      );
+      after = batch.after;
+      // /new is chronological, so the first post past the cutoff means all
+      // later pages are older still.
+      if (!after || reachedCutoff || batch.posts.length === 0) break;
+      await sleep(PAGE_DELAY_MS);
     }
+  } finally {
+    await browser.close();
   }
 
   const rows = [...rowsById.values()];
   console.log(
-    `${seen} posts in feed, ${rows.length} kept as listings (${skippedNotListing} skipped: seekers, advice, no price).`
+    `${seen} posts fetched, ${rows.length} kept as listings (${skippedNotListing} skipped: seekers, advice, no price).`,
   );
 
   if (DRY_RUN) {
