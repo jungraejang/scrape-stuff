@@ -195,6 +195,7 @@ async function fetchPage(
   page: number,
   priceLo: number | null,
   priceHi: number,
+  amenities?: string[],
 ): Promise<SeResponse["data"]> {
   const body = {
     query: QUERY,
@@ -204,6 +205,7 @@ async function fetchPage(
           rentalStatus: "ACTIVE",
           areas: AREAS,
           price: { lowerBound: priceLo, upperBound: priceHi },
+          ...(amenities ? { amenities } : {}),
         },
         page,
         perPage: PER_PAGE,
@@ -274,6 +276,39 @@ async function main() {
       await sleep(PAGE_DELAY_MS);
     }
   }
+
+  // Second pass with the WASHER_DRYER amenity filter to tag confirmed
+  // in-unit laundry; only the ids matter here.
+  console.log(`\n--- Washer/dryer tagging ---`);
+  let wdTagged = 0;
+  for (const [lo, hi] of PRICE_BANDS) {
+    let bandSeen = 0;
+    let bandTotal = Infinity;
+    for (let page = 1; bandSeen < bandTotal; page++) {
+      let data: SeResponse["data"];
+      try {
+        data = await fetchPage(page, lo, hi, ["WASHER_DRYER"]);
+      } catch (err) {
+        console.warn(`  band $${lo ?? 0}-$${hi}: ${(err as Error).message}`);
+        break;
+      }
+      bandTotal = data!.searchRentals.totalCount;
+      const nodes = data!.searchRentals.edges
+        .map((e) => e.node)
+        .filter((n): n is SeNode => n != null);
+      if (nodes.length === 0) break;
+      bandSeen += nodes.length;
+      for (const node of nodes) {
+        const entry = entriesById.get(node.id);
+        if (entry) {
+          entry.row.laundry = "in_unit";
+          wdTagged++;
+        }
+      }
+      await sleep(PAGE_DELAY_MS);
+    }
+  }
+  console.log(`  in_unit: ${wdTagged} listings tagged`);
 
   const entries = [...entriesById.values()];
   console.log(`\n${entries.length} unique active listings.`);

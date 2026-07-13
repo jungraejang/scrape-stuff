@@ -1,6 +1,8 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { config } from "dotenv";
+import { extractAvailableUntil } from "./availability";
 import { detectBorough, type Borough } from "./borough";
+import { detectLaundry, type Laundry } from "./laundry";
 import { detectListingType, type ListingType } from "./listing-type";
 
 config({ path: ".env.local" });
@@ -36,6 +38,18 @@ export interface ListingRow {
    * set it explicitly; otherwise upsertRows derives it from the text.
    */
   listing_type?: ListingType | null;
+  /**
+   * in_unit | building | null (unknown). Scrapers with a structured signal
+   * (Craigslist laundry filter) set it explicitly; otherwise upsertRows
+   * derives it from the title. Null means "not confirmed", not "no laundry".
+   */
+  laundry?: Laundry | null;
+  /**
+   * ISO date the rental period ends (sublets). Sources with explicit ranges
+   * (Listings Project) set it; otherwise upsertRows derives it from the
+   * title for sublet rows. Null = open-ended or unknown.
+   */
+  available_until?: string | null;
 }
 
 export const BROWSER_HEADERS = {
@@ -183,6 +197,17 @@ export async function upsertRows(
   for (const row of rows) {
     row.borough ??= detectBorough(row);
     row.listing_type ??= detectListingType(row);
+    row.laundry ??= detectLaundry(row);
+    // Only sublets have an end date; free text like "until renovated" on
+    // regular rentals must not produce one.
+    if (row.listing_type === "sublet") {
+      row.available_until ??= extractAvailableUntil(
+        row.title ?? "",
+        row.write_dt ? new Date(row.write_dt) : new Date(),
+      );
+    } else {
+      row.available_until ??= null;
+    }
   }
   const BATCH_SIZE = 500;
   let upserted = 0;

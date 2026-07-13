@@ -20,7 +20,9 @@
  * Debug visually: npm run scrape:reddit -- --headed
  */
 import { chromium, type Page } from "playwright";
+import { extractAvailableUntil } from "./availability";
 import { detectBorough } from "./borough";
+import { detectLaundry } from "./laundry";
 import { detectListingType, type ListingType } from "./listing-type";
 import {
   getCutoff,
@@ -180,6 +182,8 @@ function extractListingType(post: RedditPost): ListingType {
 
 function toRow(post: RedditPost, price: number, scrapedAt: string): ListingRow {
   const category = extractCategory(post);
+  const listingType = extractListingType(post);
+  const createdAt = new Date(post.createdUtc * 1000);
   return {
     source: "reddit",
     ext_id: post.id,
@@ -187,14 +191,21 @@ function toRow(post: RedditPost, price: number, scrapedAt: string): ListingRow {
     address: null,
     price,
     category,
-    listing_type: extractListingType(post),
+    listing_type: listingType,
+    // Post bodies often mention laundry and sublet dates; the shared
+    // fallbacks in upsertRows only see the title.
+    laundry: detectLaundry({ title: post.title, text: post.text }),
+    available_until:
+      listingType === "sublet"
+        ? extractAvailableUntil(`${post.title}\n${post.text}`, createdAt)
+        : null,
     beds: category?.endsWith("BR") ? Number(category[0]) : null,
     bath: null,
     size_sqft: null,
     pictures: post.picture ? [post.picture] : [],
     agent_name: null,
     posted_by: post.author,
-    write_dt: new Date(post.createdUtc * 1000).toISOString(),
+    write_dt: createdAt.toISOString(),
     url: `https://www.reddit.com${post.permalink}`,
     scraped_at: scrapedAt,
   };

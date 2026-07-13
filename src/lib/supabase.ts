@@ -20,6 +20,10 @@ export interface Listing {
   price: number | null;
   category: string | null;
   listing_type: "apartment" | "room" | "sublet" | null;
+  /** null = laundry not mentioned/confirmed, not "no laundry". */
+  laundry: "in_unit" | "building" | null;
+  /** End of the rental window (sublets); null = open-ended/unknown. */
+  available_until: string | null;
   beds: number | null;
   bath: number | null;
   size_sqft: number | null;
@@ -30,7 +34,7 @@ export interface Listing {
 }
 
 export const LISTING_COLUMNS =
-  "source,ext_id,title,address,borough,price,category,listing_type,beds,bath,size_sqft,pictures,write_dt,url";
+  "source,ext_id,title,address,borough,price,category,listing_type,laundry,available_until,beds,bath,size_sqft,pictures,write_dt,url";
 
 /** Returns null when Supabase env vars are not configured yet. */
 export function getSupabaseClient(): SupabaseClient | null {

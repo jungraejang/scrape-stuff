@@ -36,7 +36,8 @@ interface Card {
   url: string;
   photo: string | null;
   priceText: string;
-  dateRange: string | null;
+  dateStart: string | null;
+  dateEnd: string | null;
   locationLine: string | null; // "Williamsburg, Brooklyn | Apartments for Sublet"
 }
 
@@ -65,14 +66,18 @@ function parseCards(html: string): Card[] {
     const priceMatch = chunk.match(/>\s*(\$[\d,]+(?:\/\w+)?)\s*<\/span>/);
     if (!priceMatch) continue;
 
+    const dates = chunk.match(
+      />\s*(\w+ \d{1,2}, \d{4})\s*(?:-|–)\s*(\w+ \d{1,2}, \d{4})\s*</,
+    );
+
     cards.push({
       id,
       title,
       url: `https://www.listingsproject.com${url}`,
       photo: chunk.match(/<img[^>]+src="([^"]+listing_photos[^"]+)"/)?.[1]?.replace(/&amp;/g, "&") ?? null,
       priceText: priceMatch[1],
-      dateRange:
-        chunk.match(/>\s*(\w+ \d{1,2}, \d{4})\s*(?:-|–)\s*\w+ \d{1,2}, \d{4}\s*</)?.[1] ?? null,
+      dateStart: dates?.[1] ?? null,
+      dateEnd: dates?.[2] ?? null,
       locationLine:
         chunk
           .match(/class="text-grey-dark mb-2 text-smish"[^>]*>\s*([^<]+?)\s*<\/div>/)?.[1]
@@ -118,7 +123,10 @@ function toRow(card: Card, scrapedAt: string): ListingRow | null {
     agent_name: null,
     posted_by: null,
     // The sublet's start date; can be in the future ("Coming soon").
-    write_dt: card.dateRange ? new Date(card.dateRange).toISOString() : null,
+    write_dt: card.dateStart ? new Date(card.dateStart).toISOString() : null,
+    // Explicit end of the sublet window; null (open-ended) is intentional,
+    // so upsertRows must not fall back to the title heuristic.
+    available_until: card.dateEnd ? new Date(card.dateEnd).toISOString() : null,
     url: card.url,
     scraped_at: scrapedAt,
   };

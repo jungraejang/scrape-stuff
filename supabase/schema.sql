@@ -15,6 +15,8 @@ create table public.listings (
   price int,
   category text,                  -- Studio / 1BR / 2BR / ... (unit size)
   listing_type text,              -- apartment | room | sublet
+  laundry text,                   -- in_unit | building; null = unknown
+  available_until timestamptz,    -- sublet end date; null = open-ended/unknown
   beds numeric,
   bath numeric,
   size_sqft int,
@@ -31,9 +33,11 @@ create index listings_write_dt_idx on public.listings (write_dt desc nulls last)
 create index listings_source_idx on public.listings (source);
 create index listings_borough_idx on public.listings (borough);
 
--- Migration for existing databases created before listing_type existed
+-- Migrations for existing databases created before these columns existed
 -- (idempotent; harmless right after the create table above):
 alter table public.listings add column if not exists listing_type text;
+alter table public.listings add column if not exists laundry text;
+alter table public.listings add column if not exists available_until timestamptz;
 
 -- Row Level Security: anyone can read (frontend uses the anon key),
 -- but only the service role key (used by the scrapers) can write.

@@ -185,7 +185,18 @@ function decodeItem(
   };
 }
 
-async function fetchBand(cat: string, minPrice: number, maxPrice: number): Promise<SapiData> {
+// Craigslist laundry attribute values (same as the website's search filter).
+const LAUNDRY_PARAMS: Array<[craigslistValue: string, laundry: "in_unit" | "building"]> = [
+  ["1", "in_unit"], // w/d in unit
+  ["3", "building"], // laundry in bldg
+];
+
+async function fetchBand(
+  cat: string,
+  minPrice: number,
+  maxPrice: number,
+  laundry?: string,
+): Promise<SapiData> {
   const params = new URLSearchParams({
     batch: BATCH,
     cat,
@@ -194,6 +205,7 @@ async function fetchBand(cat: string, minPrice: number, maxPrice: number): Promi
     searchPath: cat,
     min_price: String(minPrice),
     max_price: String(maxPrice),
+    ...(laundry ? { laundry } : {}),
   });
   const res = await fetch(`${API_BASE}?${params}`, {
     headers: {
@@ -266,6 +278,36 @@ async function main() {
       );
       await sleep(PAGE_DELAY_MS);
     }
+  }
+
+  // Second pass: re-run each band with Craigslist's laundry filter to tag
+  // rows with confirmed washer/dryer info. Only the posting ids matter here;
+  // in_unit is processed last so it wins over building for cross-tagged posts.
+  console.log(`\n--- Laundry tagging ---`);
+  for (const [param, laundry] of [...LAUNDRY_PARAMS].reverse()) {
+    let tagged = 0;
+    for (const section of SECTIONS) {
+      for (const [min, max] of section.priceBands) {
+        let data: SapiData;
+        try {
+          data = await fetchBand(section.cat, min, max, param);
+        } catch (err) {
+          console.warn(`  ${section.label} ${min}-${max} laundry=${param}: ${(err as Error).message}`);
+          continue;
+        }
+        for (const item of data.items) {
+          const idOffset = item[0];
+          if (typeof idOffset !== "number") continue;
+          const row = rowsById.get(String(data.decode.minPostingId + idOffset));
+          if (row && (laundry === "in_unit" || row.laundry == null)) {
+            row.laundry = laundry;
+            tagged++;
+          }
+        }
+        await sleep(PAGE_DELAY_MS);
+      }
+    }
+    console.log(`  ${laundry}: ${tagged} listings tagged`);
   }
 
   const rows = dedupeByTitlePrice([...rowsById.values()]);

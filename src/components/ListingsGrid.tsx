@@ -2,7 +2,17 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
-import { LayoutGrid, List, Search, X } from "lucide-react";
+import {
+  CalendarRange,
+  LayoutGrid,
+  List,
+  Mail,
+  MailCheck,
+  MailX,
+  Search,
+  WashingMachine,
+  X,
+} from "lucide-react";
 import type { Listing } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -128,6 +138,23 @@ const LISTING_TYPE_LABELS: Record<(typeof LISTING_TYPE_KEYS)[number], string> =
     sublet: "Sublets",
   };
 
+/**
+ * Options for the sublet period filter: the next 12 months. Values are
+ * "YYYY-MM"; labels like "Aug 2026".
+ */
+function buildMonthOptions(): Array<{ value: string; label: string }> {
+  const now = new Date();
+  return Array.from({ length: 12 }, (_, i) => {
+    const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+    const value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const label = d.toLocaleDateString("en-US", {
+      month: "short",
+      year: "numeric",
+    });
+    return { value, label };
+  });
+}
+
 const PRICE_SLIDER_MIN = 0;
 const PRICE_SLIDER_MAX = 3000;
 const PRICE_SLIDER_STEP = 50;
@@ -142,12 +169,45 @@ const DISPLAY_COUNT_LABELS: Record<string, string> = {
 
 const FILTER_STORAGE_KEY = "listings-filters";
 
+/**
+ * Listings the user marked as "already emailed", kept in localStorage only
+ * (no account needed). Maps "source:ext_id" to the ISO time it was marked.
+ */
+const CONTACTED_STORAGE_KEY = "contacted-listings";
+
+function listingKey(l: Listing): string {
+  return `${l.source}:${l.ext_id}`;
+}
+
+function readContacted(): Record<string, string> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(CONTACTED_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) return {};
+    return Object.fromEntries(
+      Object.entries(parsed).filter(
+        (e): e is [string, string] => typeof e[1] === "string",
+      ),
+    );
+  } catch {
+    return {};
+  }
+}
+
 type SavedFilters = {
   /** Empty array = no filter (show all). */
   sources: string[];
   boroughs: string[];
   listingTypes: string[];
   categories: string[];
+  /** Show only listings with confirmed in-unit washer/dryer. */
+  laundryOnly: boolean;
+  /** "YYYY-MM": show only sublets whose window covers that month. */
+  subletMonth: string | null;
+  /** Hide listings the user marked as already emailed. */
+  hideEmailed: boolean;
   sort: SortKey;
   priceRange: [number, number];
   view: ViewMode;
@@ -159,6 +219,9 @@ const DEFAULT_FILTERS: SavedFilters = {
   boroughs: [],
   listingTypes: [],
   categories: [],
+  laundryOnly: false,
+  subletMonth: null,
+  hideEmailed: false,
   sort: "newest",
   priceRange: DEFAULT_PRICE_RANGE,
   view: "cards",
@@ -232,6 +295,12 @@ function readSavedFilters(): SavedFilters {
         LISTING_TYPE_KEYS.includes(v as (typeof LISTING_TYPE_KEYS)[number]),
       ),
       categories: readSelection(parsed.categories, parsed.category),
+      laundryOnly: parsed.laundryOnly === true,
+      // A saved month that's no longer offered (it passed) is dropped.
+      subletMonth: buildMonthOptions().some((m) => m.value === parsed.subletMonth)
+        ? (parsed.subletMonth as string)
+        : null,
+      hideEmailed: parsed.hideEmailed === true,
       sort:
         parsed.sort === "newest" ||
         parsed.sort === "price_asc" ||
@@ -294,6 +363,8 @@ export default function ListingsGrid({
   lastUpdated?: string | null;
 }) {
   const [filters, setFilters] = useState<SavedFilters>(DEFAULT_FILTERS);
+  const [contacted, setContacted] = useState<Record<string, string>>({});
+  const contactedHydrated = useRef(false);
   const [page, setPage] = useState(1);
   // Search is deliberately not persisted to localStorage: a stale query from
   // a previous visit silently hiding most listings would be confusing.
@@ -301,6 +372,14 @@ export default function ListingsGrid({
   const [query, setQuery] = useState("");
   const filtersHydrated = useRef(false);
   const resultsRef = useRef<HTMLDivElement>(null);
+
+  const monthOptions = useMemo(() => buildMonthOptions(), []);
+  // Base UI's Select needs a value->label record to render the trigger text.
+  const monthItems = useMemo(() => {
+    const items: Record<string, string> = { any: "Sublet dates: any" };
+    for (const m of monthOptions) items[m.value] = `Sublets in ${m.label}`;
+    return items;
+  }, [monthOptions]);
 
   // Debounce so filtering (and page reset) doesn't run on every keystroke.
   useEffect(() => {
@@ -320,11 +399,33 @@ export default function ListingsGrid({
     filtersHydrated.current = true;
   }, []);
 
+  useEffect(() => {
+    const saved = readContacted();
+    // Drop marks for listings that no longer exist (pruned from the
+    // database); they can't come back, and this keeps the store small.
+    const current = new Set(listings.map(listingKey));
+    const pruned = Object.fromEntries(
+      Object.entries(saved).filter(([key]) => current.has(key)),
+    );
+    // Merge under any marks made before this effect ran (e.g. fast clicks).
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- client-only hydration from localStorage
+    setContacted((prev) => ({ ...pruned, ...prev }));
+    contactedHydrated.current = true;
+  }, [listings]);
+
+  useEffect(() => {
+    if (!contactedHydrated.current) return;
+    localStorage.setItem(CONTACTED_STORAGE_KEY, JSON.stringify(contacted));
+  }, [contacted]);
+
   const {
     sources,
     boroughs: selectedBoroughs,
     listingTypes: selectedListingTypes,
     categories: selectedCategories,
+    laundryOnly,
+    subletMonth,
+    hideEmailed,
     sort,
     priceRange,
     view,
@@ -356,6 +457,26 @@ export default function ListingsGrid({
   const clearListingTypes = () => {
     setFilters((f) => ({ ...f, listingTypes: [] }));
     setPage(1);
+  };
+  const toggleLaundryOnly = () => {
+    setFilters((f) => ({ ...f, laundryOnly: !f.laundryOnly }));
+    setPage(1);
+  };
+  const setSubletMonth = (value: string | null) => {
+    setFilters((f) => ({ ...f, subletMonth: value }));
+    setPage(1);
+  };
+  const toggleHideEmailed = () => {
+    setFilters((f) => ({ ...f, hideEmailed: !f.hideEmailed }));
+    setPage(1);
+  };
+  const toggleContacted = (key: string) => {
+    setContacted((prev) => {
+      const next = { ...prev };
+      if (next[key]) delete next[key];
+      else next[key] = new Date().toISOString();
+      return next;
+    });
   };
   const toggleCategory = (value: string) => {
     setFilters((f) => ({ ...f, categories: toggleValue(f.categories, value) }));
@@ -391,15 +512,26 @@ export default function ListingsGrid({
     return listings.filter((l) => matchesSearch(l, words));
   }, [listings, query]);
 
+  const emailedCount = useMemo(
+    () => bySearch.filter((l) => contacted[listingKey(l)]).length,
+    [bySearch, contacted],
+  );
+
+  // Applied early so every downstream chip count reflects the hidden rows.
+  const byContacted = useMemo(() => {
+    if (!hideEmailed) return bySearch;
+    return bySearch.filter((l) => !contacted[listingKey(l)]);
+  }, [bySearch, hideEmailed, contacted]);
+
   // Listings without a price are kept; they can't be proven to be out of range.
   const byPrice = useMemo(() => {
     const [min, max] = priceRange;
     const isFullRange = min <= PRICE_SLIDER_MIN && max >= PRICE_SLIDER_MAX;
-    if (isFullRange) return bySearch;
-    return bySearch.filter(
+    if (isFullRange) return byContacted;
+    return byContacted.filter(
       (l) => l.price == null || (l.price >= min && l.price <= max),
     );
-  }, [bySearch, priceRange]);
+  }, [byContacted, priceRange]);
 
   // Rows scraped before the listing_type column existed count as apartments,
   // the overwhelmingly common case, until a scrape or backfill labels them.
@@ -429,16 +561,51 @@ export default function ListingsGrid({
     return byPrice.filter((l) => wanted.has(l.listing_type ?? "apartment"));
   }, [byPrice, activeListingTypes]);
 
+  // Confirmed in-unit W/D only; null means unknown, so this is intentionally
+  // a narrowing toggle rather than a yes/no facet.
+  const laundryCount = useMemo(
+    () => byListingType.filter((l) => l.laundry === "in_unit").length,
+    [byListingType],
+  );
+
+  const byLaundry = useMemo(() => {
+    if (!laundryOnly) return byListingType;
+    return byListingType.filter((l) => l.laundry === "in_unit");
+  }, [byListingType, laundryOnly]);
+
+  // Sublet-style listings whose availability window covers the chosen month.
+  // "Sublet-style" = typed as sublet OR carrying an explicit end date (e.g.
+  // Listings Project rooms offered for a fixed window). A missing start date
+  // means "available now" and a missing end date means open-ended, so both
+  // count as covering.
+  const byPeriod = useMemo(() => {
+    if (!subletMonth) return byLaundry;
+    const [y, m] = subletMonth.split("-").map(Number);
+    const monthStart = Date.UTC(y, m - 1, 1);
+    const monthEnd = Date.UTC(y, m, 0, 23, 59, 59);
+    return byLaundry.filter((l) => {
+      if (l.listing_type !== "sublet" && l.available_until == null)
+        return false;
+      if (l.write_dt && new Date(l.write_dt).getTime() > monthEnd) return false;
+      if (
+        l.available_until &&
+        new Date(l.available_until).getTime() < monthStart
+      )
+        return false;
+      return true;
+    });
+  }, [byLaundry, subletMonth]);
+
   const boroughs = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const l of byListingType) {
+    for (const l of byPeriod) {
       if (!l.borough) continue;
       counts.set(l.borough, (counts.get(l.borough) ?? 0) + 1);
     }
     return BOROUGH_KEYS.map(
       (key) => [key, counts.get(key) ?? 0] as const,
     ).filter(([, count]) => count > 0);
-  }, [byListingType]);
+  }, [byPeriod]);
 
   const activeBoroughs = useMemo(() => {
     const available = new Set<string>(boroughs.map(([key]) => key));
@@ -446,12 +613,10 @@ export default function ListingsGrid({
   }, [selectedBoroughs, boroughs]);
 
   const byBorough = useMemo(() => {
-    if (activeBoroughs.length === 0) return byListingType;
+    if (activeBoroughs.length === 0) return byPeriod;
     const wanted = new Set(activeBoroughs);
-    return byListingType.filter(
-      (l) => l.borough != null && wanted.has(l.borough),
-    );
-  }, [byListingType, activeBoroughs]);
+    return byPeriod.filter((l) => l.borough != null && wanted.has(l.borough));
+  }, [byPeriod, activeBoroughs]);
 
   const bySource = useMemo(() => {
     if (sources.length === 0) return byBorough;
@@ -643,11 +808,56 @@ export default function ListingsGrid({
             onClick={() => toggleListingType(key)}
           />
         ))}
+        <Button
+          variant={laundryOnly ? "default" : "outline"}
+          size="sm"
+          className="rounded-none"
+          onClick={toggleLaundryOnly}
+          title="Only listings with confirmed in-unit washer/dryer; unmarked listings may still have one."
+        >
+          <WashingMachine />
+          W/D in unit ({laundryCount})
+        </Button>
+        <Button
+          variant={hideEmailed ? "default" : "outline"}
+          size="sm"
+          className="rounded-none"
+          onClick={toggleHideEmailed}
+          title="Hide listings you've marked as emailed (the mail button on each listing). Marks are saved in this browser only."
+        >
+          <MailX />
+          Hide emailed ({emailedCount})
+        </Button>
+        <div
+          className="ml-auto"
+          title="Show only sublets whose availability window covers the chosen month. Sublets without a stated end date count as open-ended."
+        >
+          <Select
+            value={subletMonth ?? "any"}
+            items={monthItems}
+            onValueChange={(value) =>
+              setSubletMonth(value === "any" ? null : (value as string))
+            }
+          >
+            <SelectTrigger className="w-[190px] rounded-none">
+              <CalendarRange className="size-4 text-muted-foreground" />
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="any">Sublet dates: any</SelectItem>
+              {monthOptions.map((m) => (
+                <SelectItem key={m.value} value={m.value}>
+                  Sublets in {m.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <FilterChip
-          label={`All locations (${byListingType.length})`}
+          label={`All locations (${byPeriod.length})`}
           active={activeBoroughs.length === 0}
           onClick={clearBoroughs}
         />
@@ -735,8 +945,10 @@ export default function ListingsGrid({
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 theme8bit:gap-4 theme8bit:border-4 theme8bit:border-black theme8bit:p-2 theme8bit:shadow-[6px_6px_0_#000]">
           {pageItems.map((listing) => (
             <ListingCard
-              key={`${listing.source}:${listing.ext_id}`}
+              key={listingKey(listing)}
               listing={listing}
+              contactedAt={contacted[listingKey(listing)] ?? null}
+              onToggleContacted={() => toggleContacted(listingKey(listing))}
             />
           ))}
         </div>
@@ -763,13 +975,18 @@ export default function ListingsGrid({
                 <TableHead className="hidden w-[104px] theme8bit:w-[150px] sm:table-cell">
                   Price
                 </TableHead>
+                <TableHead className="w-[56px]">
+                  <span className="sr-only">Emailed</span>
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {pageItems.map((listing) => (
                 <ListingRow
-                  key={`${listing.source}:${listing.ext_id}`}
+                  key={listingKey(listing)}
                   listing={listing}
+                  contactedAt={contacted[listingKey(listing)] ?? null}
+                  onToggleContacted={() => toggleContacted(listingKey(listing))}
                 />
               ))}
             </TableBody>
@@ -998,6 +1215,32 @@ function formatPosted(write_dt: string | null): string | null {
   });
 }
 
+/** UTC keeps end-of-month dates stored at UTC midnight on the right day. */
+function formatDay(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-US", {
+    timeZone: "UTC",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+/**
+ * The date shown next to a listing. For listings with a known end date this
+ * is the availability window: Listings Project's listing date is the actual
+ * start date so it shows a full range, while other sources only know the
+ * end ("Until Oct 31").
+ */
+function formatListingDate(listing: Listing): string | null {
+  if (listing.available_until) {
+    const until = formatDay(listing.available_until);
+    if (listing.source === "listingsproject" && listing.write_dt) {
+      return `${formatDay(listing.write_dt)} – ${until}`;
+    }
+    return `Until ${until}`;
+  }
+  return formatPosted(listing.write_dt);
+}
+
 /**
  * A date in the future means the listing isn't available yet (StreetEasy
  * uses the availability date as the listing date).
@@ -1033,6 +1276,86 @@ function ListingTypeBadge({
     >
       {type === "room" ? "Room" : "Sublet"}
     </Badge>
+  );
+}
+
+/** Confirmed in-unit washer/dryer; absence means unknown, so no "no W/D" badge. */
+function LaundryBadge({
+  listing,
+  className,
+}: {
+  listing: Listing;
+  className?: string;
+}) {
+  if (listing.laundry !== "in_unit") return null;
+  return (
+    <Badge
+      className={cn(
+        "border-transparent bg-sky-600 font-medium text-white",
+        "theme8bit:border-2 theme8bit:border-black theme8bit:shadow-[2px_2px_0_#000]",
+        className,
+      )}
+    >
+      <WashingMachine className="size-3" />
+      W/D
+    </Badge>
+  );
+}
+
+function EmailedBadge({ className }: { className?: string }) {
+  return (
+    <Badge
+      className={cn(
+        "border-transparent bg-emerald-600 font-medium text-white",
+        "theme8bit:border-2 theme8bit:border-black theme8bit:shadow-[2px_2px_0_#000]",
+        className,
+      )}
+    >
+      <MailCheck className="size-3" />
+      Emailed
+    </Badge>
+  );
+}
+
+/**
+ * Toggles the browser-local "I already emailed this one" mark. Rendered
+ * inside link/click areas, so it swallows the event.
+ */
+function ContactedButton({
+  contactedAt,
+  onToggle,
+  className,
+}: {
+  contactedAt: string | null;
+  onToggle: () => void;
+  className?: string;
+}) {
+  const marked = contactedAt != null;
+  const label = marked
+    ? `Emailed ${formatPosted(contactedAt)} — click to unmark`
+    : "Mark as emailed";
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      aria-pressed={marked}
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onToggle();
+      }}
+      className={cn(
+        "flex h-8 w-8 items-center justify-center rounded-full border shadow-sm transition-colors",
+        marked
+          ? "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700"
+          : "border-border bg-background/90 text-muted-foreground backdrop-blur hover:text-foreground",
+        "theme8bit:rounded-none theme8bit:border-2 theme8bit:border-black theme8bit:shadow-[2px_2px_0_#000] theme8bit:backdrop-blur-none",
+        className,
+      )}
+    >
+      {marked ? <MailCheck className="h-4 w-4" /> : <Mail className="h-4 w-4" />}
+    </button>
   );
 }
 
@@ -1098,8 +1421,16 @@ function ListingPhoto({
   );
 }
 
-function ListingCard({ listing }: { listing: Listing }) {
-  const posted = formatPosted(listing.write_dt);
+function ListingCard({
+  listing,
+  contactedAt,
+  onToggleContacted,
+}: {
+  listing: Listing;
+  contactedAt: string | null;
+  onToggleContacted: () => void;
+}) {
+  const posted = formatListingDate(listing);
   const meta = listingMeta(listing);
 
   return (
@@ -1109,7 +1440,12 @@ function ListingCard({ listing }: { listing: Listing }) {
       rel="noopener noreferrer"
       className="group block"
     >
-      <Card className="h-full gap-0 py-0 transition-shadow hover:shadow-md theme8bit:hover:translate-x-px theme8bit:hover:translate-y-px">
+      <Card
+        className={cn(
+          "h-full gap-0 py-0 transition-shadow hover:shadow-md theme8bit:hover:translate-x-px theme8bit:hover:translate-y-px",
+          contactedAt != null && "opacity-70",
+        )}
+      >
         <div className="relative aspect-4/3 w-full bg-muted">
           <ListingPhoto
             listing={listing}
@@ -1123,6 +1459,8 @@ function ListingCard({ listing }: { listing: Listing }) {
               </Badge>
             )}
             <ListingTypeBadge listing={listing} />
+            <LaundryBadge listing={listing} />
+            {contactedAt != null && <EmailedBadge />}
           </div>
           <SourceBadge
             source={listing.source}
@@ -1131,6 +1469,11 @@ function ListingCard({ listing }: { listing: Listing }) {
           {isComingSoon(listing.write_dt) && (
             <ComingSoonBadge className="absolute bottom-3 left-3" />
           )}
+          <ContactedButton
+            contactedAt={contactedAt}
+            onToggle={onToggleContacted}
+            className="absolute bottom-3 right-3"
+          />
         </div>
         <CardContent className="p-4">
           <div className="flex items-baseline justify-between gap-2">
@@ -1166,13 +1509,24 @@ function ListingCard({ listing }: { listing: Listing }) {
   );
 }
 
-function ListingRow({ listing }: { listing: Listing }) {
-  const posted = formatPosted(listing.write_dt);
+function ListingRow({
+  listing,
+  contactedAt,
+  onToggleContacted,
+}: {
+  listing: Listing;
+  contactedAt: string | null;
+  onToggleContacted: () => void;
+}) {
+  const posted = formatListingDate(listing);
   const meta = listingMeta(listing);
   const open = () => window.open(listing.url, "_blank", "noopener,noreferrer");
 
   return (
-    <TableRow className="cursor-pointer" onClick={open}>
+    <TableRow
+      className={cn("cursor-pointer", contactedAt != null && "opacity-60")}
+      onClick={open}
+    >
       <TableCell>
         <div className="relative h-14 w-20 overflow-hidden rounded-md bg-muted sm:h-16 sm:w-24">
           <ListingPhoto
@@ -1210,6 +1564,8 @@ function ListingRow({ listing }: { listing: Listing }) {
             <Badge variant="outline">{listing.category}</Badge>
           )}
           <ListingTypeBadge listing={listing} />
+          <LaundryBadge listing={listing} />
+          {contactedAt != null && <EmailedBadge />}
           {isComingSoon(listing.write_dt) && <ComingSoonBadge />}
           {posted && (
             <span className="text-xs text-muted-foreground">{posted}</span>
@@ -1228,6 +1584,7 @@ function ListingRow({ listing }: { listing: Listing }) {
             <span className="text-muted-foreground">—</span>
           ) : null}
           <ListingTypeBadge listing={listing} />
+          <LaundryBadge listing={listing} />
         </div>
       </TableCell>
       <TableCell className="hidden text-muted-foreground sm:table-cell">
@@ -1241,6 +1598,12 @@ function ListingRow({ listing }: { listing: Listing }) {
         {listing.price != null && (
           <span className="text-xs font-normal text-muted-foreground">/mo</span>
         )}
+      </TableCell>
+      <TableCell>
+        <ContactedButton
+          contactedAt={contactedAt}
+          onToggle={onToggleContacted}
+        />
       </TableCell>
     </TableRow>
   );
